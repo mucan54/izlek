@@ -95,6 +95,12 @@ public class AnalyticsCore(
     private val endpoint = config.host.trimEnd('/') + "/v1/e"
     private val rotateAt = config.flushAt.coerceIn(1, Wire.MAX_BATCH_RECORDS)
 
+    /**
+     * Largest segment file. Bounded by the batch limit and by a fraction of the queue limit, so
+     * that evicting the oldest segment never throws away most of the queue at once.
+     */
+    private val segmentCapBytes = minOf(MAX_SEGMENT_BYTES, maxOf(config.maxQueueBytes / 8, MIN_SEGMENT_CAP_BYTES))
+
     private sealed class Cmd {
         class Capture(val ts: Long, val name: String, val props: EncodedProps) : Cmd()
         class Identify(val ts: Long, val userId: String, val props: Map<String, Any?>) : Cmd()
@@ -424,7 +430,7 @@ public class AnalyticsCore(
         }
         val frame = Wire.frame(body)
         // Keep every segment within the batch limits of spec/wire.md §3.
-        if (queue.activeCount >= Wire.MAX_BATCH_RECORDS || queue.activeBytes + frame.size > MAX_SEGMENT_BYTES) {
+        if (queue.activeCount >= Wire.MAX_BATCH_RECORDS || queue.activeBytes + frame.size > segmentCapBytes) {
             queue.rotate()
         }
         val meta = SegmentMeta(ts, state.anonId, state.userId, sessionBytes)
@@ -755,6 +761,7 @@ public class AnalyticsCore(
 
         /** Largest segment file: leaves room for the magic and a maximum-size header. */
         internal const val MAX_SEGMENT_BYTES: Long = 900_000
+        private const val MIN_SEGMENT_CAP_BYTES: Long = 4_096
 
         /** Directory name derived from the token (the token itself is not written to disk paths). */
         public fun tokenHash(token: String): String {

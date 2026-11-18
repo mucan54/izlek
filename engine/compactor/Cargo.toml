@@ -1,5 +1,6 @@
 [package]
 name = "la-compactor"
+description = "Compaction, garbage collection, retention and person deletion for the events store"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,3 +10,14 @@ publish.workspace = true
 [dependencies]
 la-codec.workspace = true
 la-core.workspace = true
+arrow.workspace = true
+parquet.workspace = true
+object_store.workspace = true
+tokio.workspace = true
+futures.workspace = true
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+rand.workspace = true
+tempfile.workspace = true

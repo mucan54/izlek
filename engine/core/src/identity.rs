@@ -352,6 +352,65 @@ pub async fn compact(store: &Store, project: u32) -> Result<bool> {
     Ok(false)
 }
 
+/// Removes every link whose `anon_id` is in `drop_anons` or whose `user_id` is
+/// in `drop_users` (person deletion, `spec/manifest.md` §9) by rewriting all
+/// listed files into one. Row versions are preserved. Returns the number of
+/// links removed (0 = nothing matched, nothing written).
+pub async fn rewrite_dropping(
+    store: &Store,
+    project: u32,
+    drop_anons: &HashSet<String>,
+    drop_users: &HashSet<String>,
+) -> Result<usize> {
+    let dir = keys::identity_manifest_dir(project);
+    for _ in 0..8 {
+        let base: IdentityManifest = manifest::load_latest(store, &dir).await?;
+        if base.files.is_empty() {
+            return Ok(0);
+        }
+        let mut merged = IdentityMap::default();
+        let mut missing = false;
+        for f in &base.files {
+            match store.get(&f.key).await? {
+                Some(data) => {
+                    for l in decode_links(data, f)? {
+                        merged.insert(l);
+                    }
+                }
+                None => missing = true,
+            }
+        }
+        if missing {
+            continue; // compacted underneath us; look again
+        }
+        let before = merged.len();
+        let mut links: Vec<Link> =
+            merged.iter().filter(|l| !drop_anons.contains(&l.anon_id) && !drop_users.contains(&l.user_id)).collect();
+        let removed = before - links.len();
+        if removed == 0 {
+            return Ok(0);
+        }
+        links.sort_by(|a, b| a.anon_id.cmp(&b.anon_id));
+        let inputs: HashSet<String> = base.files.iter().map(|f| f.key.clone()).collect();
+        let (lo, hi) = links.iter().fold((u64::MAX, 0u64), |(lo, hi), l| (lo.min(l.version), hi.max(l.version)));
+        let mut m = base;
+        let v = m.version + 1;
+        m.files.retain(|f| !inputs.contains(&f.key));
+        if !links.is_empty() {
+            let key = keys::identity_compacted(project, v);
+            store.put(&key, encode_links(&links)?).await?;
+            let (min_version, max_version) = if lo == hi { (lo.saturating_sub(1), hi) } else { (lo, hi) };
+            m.files.insert(0, SideFile { key, rows: links.len() as u64, min_version, max_version });
+        }
+        m.version = v;
+        if store.put_json_if_absent(&keys::manifest_file(&dir, v), &m).await? {
+            return Ok(removed);
+        }
+        metrics::MANIFEST_CONFLICTS.inc();
+    }
+    Err(Error::Conflict(dir))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,5 +554,32 @@ mod tests {
         let fresh = IdentityMap::load(&s, 1).await.unwrap();
         assert_eq!(fresh.resolve_after("a0", 0), Some("u"));
         assert_eq!(fresh.resolve_after("a0", 1), None);
+    }
+
+    #[tokio::test]
+    async fn dropping_links_rewrites_into_one_file() {
+        let s = Store::memory();
+        let mut map = IdentityMap::default();
+        append_delta(&s, 1, "1-0", 1, vec![cand("a1", "u1", 1, 1), cand("a2", "u2", 2, 2)], &mut map).await.unwrap();
+        append_delta(&s, 1, "1-0", 2, vec![cand("a3", "u1", 3, 3), cand("a4", "u4", 4, 4)], &mut map).await.unwrap();
+        let none = rewrite_dropping(&s, 1, &HashSet::new(), &["nobody".to_owned()].into()).await.unwrap();
+        assert_eq!(none, 0);
+        assert_eq!(manifest::latest_version(&s, &keys::identity_manifest_dir(1)).await.unwrap(), 2);
+        let removed = rewrite_dropping(&s, 1, &["a4".to_owned()].into(), &["u1".to_owned()].into()).await.unwrap();
+        assert_eq!(removed, 3);
+        let fresh = IdentityMap::load(&s, 1).await.unwrap();
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh.resolve("a2"), Some("u2"));
+        assert_eq!(fresh.resolve_after("a2", 0), Some("u2"));
+        assert_eq!(fresh.resolve_after("a2", 1), None, "row version survives the rewrite");
+        let m: IdentityManifest = manifest::load_latest(&s, &keys::identity_manifest_dir(1)).await.unwrap();
+        assert_eq!((m.version, m.files.len()), (3, 1));
+        assert_eq!(m.applied.get("1-0"), Some(&2), "plan bookkeeping is kept");
+        // New deltas still append and plans stay idempotent.
+        let again = append_delta(&s, 1, "1-0", 2, vec![cand("a1", "u1", 1, 1)], &mut IdentityMap::default()).await.unwrap();
+        assert!(again.already_applied);
+        // Dropping the last link leaves an empty file list.
+        assert_eq!(rewrite_dropping(&s, 1, &["a2".to_owned()].into(), &HashSet::new()).await.unwrap(), 1);
+        assert!(IdentityMap::load(&s, 1).await.unwrap().is_empty());
     }
 }

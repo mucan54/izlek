@@ -131,10 +131,6 @@ func readBody(r *http.Request, reserve, limit int) (*[]byte, error) {
 		if errors.Is(err, errTooLarge) || errors.Is(err, errBadBody) {
 			return nil, err
 		}
-		var mbe *http.MaxBytesError
-		if errors.As(err, &mbe) {
-			return nil, errTooLarge
-		}
 		return nil, errClientRead
 	}
 	return bp, nil

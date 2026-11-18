@@ -1,0 +1,10 @@
+{
+  "name": "izlek-ingest-posthog-compat",
+  "private": true,
+  "description": "PostHog SDK compatibility tests for the ingestion adapter. SDK versions are pinned on purpose; bump them deliberately and re-run.",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "posthog-js": "1.451.1",
+    "posthog-node": "6.0.4"
+  }
+}

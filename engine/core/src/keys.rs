@@ -46,6 +46,41 @@ pub fn wal_done(shardkey: &str, segment_name: &str) -> String {
     format!("wal/_done/{shardkey}/{segment_name}.ok")
 }
 
+/// Record of a segment the shipper skipped because it could not be decoded
+/// (extension of `spec/manifest.md` §1; shares the `wal/` lifecycle).
+pub fn wal_quarantine_dir(shardkey: &str) -> String {
+    format!("wal/_quarantine/{shardkey}")
+}
+
+pub fn wal_quarantine(shardkey: &str, segment_name: &str) -> String {
+    format!("wal/_quarantine/{shardkey}/{segment_name}.json")
+}
+
+/// Completion marker of a rebuild plan. The leading underscore keeps it out
+/// of the `<node>-<seq>` segment name space.
+pub fn wal_rebuild_done(shardkey: &str, plan: u64) -> String {
+    format!("wal/_done/{shardkey}/_rebuild-{plan:010}.ok")
+}
+
+/// Plan number from a plan object key (`wal/_plan/<shardkey>/<n:010>.json`).
+pub fn plan_number(key: &str) -> Option<u64> {
+    let name = key.rsplit('/').next()?.strip_suffix(".json")?;
+    if name.len() != 10 || !name.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    name.parse().ok()
+}
+
+/// Compactor bookkeeping for a project's tombstones. Deliberately not a
+/// `.json` object so tombstone readers never mistake it for a tombstone.
+pub fn tombstone_state(project: u32) -> String {
+    format!("tombstones/p={project}/_applied.state")
+}
+
+pub fn replay_day_prefix(project: u32, day: &str) -> String {
+    format!("replay/p={project}/d={day}")
+}
+
 pub fn data_project_prefix(project: u32) -> String {
     format!("data/p={project}")
 }
@@ -151,6 +186,10 @@ mod tests {
         );
         assert_eq!(identity_delta(1017, "1-0", 1234), "identity/p=1017/map-1-0-0000001234.parquet");
         assert_eq!(lease_epoch("shipper-1-0", 57), "control/lease/shipper-1-0/000000000057.json");
+        assert_eq!(wal_quarantine("1-0", "ing-01-000000000007"), "wal/_quarantine/1-0/ing-01-000000000007.json");
+        assert_eq!(wal_rebuild_done("1-0", 12), "wal/_done/1-0/_rebuild-0000000012.ok");
+        assert_eq!(tombstone_state(7), "tombstones/p=7/_applied.state");
+        assert_eq!(replay_day_prefix(7, "2026-11-18"), "replay/p=7/d=2026-11-18");
     }
 
     #[test]
@@ -160,6 +199,9 @@ mod tests {
         assert_eq!(segment_dt_hh(k), Some(("2026-11-18", "21")));
         assert_eq!(segment_name("wal/_done/1-0/x.ok"), None);
         assert_eq!(manifest_version("a/_m/00000042.json"), Some(42));
+        assert_eq!(plan_number("wal/_plan/1-0/0000001234.json"), Some(1234));
+        assert_eq!(plan_number("wal/_plan/1-0/1234.json"), None);
+        assert_eq!(segment_name("wal/_done/1-0/_rebuild-0000000012.ok"), None);
         assert_eq!(manifest_version("a/_m/42.json"), None);
         assert_eq!(manifest_version("a/_m/0000004x.json"), None);
         assert_eq!(parse_project_dir("p=1017"), Some(1017));

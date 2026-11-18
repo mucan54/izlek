@@ -47,9 +47,10 @@ func scanPostHog(b []byte) phInfo {
 			case keyIs(key, "token"):
 				token = stringAt(b, vs, ve)
 			case keyIs(key, "batch"):
+				// A repeated key replaces the earlier one (last wins).
+				hasBatch, info.events, batchFirst = false, 1, [2]int{-1, -1}
 				if vs < len(b) && b[vs] == '[' {
 					hasBatch = true
-					batchFirst = [2]int{-1, -1}
 					info.events = arrayEach(b, vs, func(idx, es, ee int) {
 						if idx == 0 {
 							batchFirst = [2]int{es, ee}

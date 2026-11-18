@@ -55,6 +55,9 @@ kotlin {
 
     sourceSets.configureEach {
         languageSettings.optIn("dev.izlek.analytics.InternalIzlekApi")
+        if (name.endsWith("Test") || project.name == "analytics-testkit") {
+            languageSettings.optIn("kotlinx.coroutines.ExperimentalCoroutinesApi")
+        }
     }
 
     sourceSets.named("commonTest") {
