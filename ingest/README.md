@@ -62,6 +62,7 @@ Kapanış (`SIGTERM`/`SIGINT`): `/readyz` 503 → `LA_DRAIN_SECONDS` bekle → a
 | `LA_TOKENS_KEY` | `control/tokens.json` | Token dosyasının anahtarı |
 | `LA_TOKENS_POLL_SECONDS` | `30` | `If-None-Match` ile yoklama aralığı |
 | `LA_TOKENS_CACHE` | `$LA_WAL_DIR/tokens.json` | Son iyi kopyanın yolu |
+| `LA_FLAGS_CACHE_SECONDS` | `30` | `GET /flags/<token>.json` için bellekteki kopyanın yeniden kullanılma süresi |
 | `LA_COMPAT_POSTHOG` | `true` | PostHog uçlarını aç/kapat (`false` → hepsi 404) |
 | `LA_GEO_DB` | boş | Ülke MMDB dosyası (GeoLite2-Country / DB-IP düzeni). Boşsa ülke hep `ZZ`. Verilip okunamazsa servis başlamaz |
 | `LA_TRUSTED_PROXIES` | `0` | Önümüzdeki güvenilir vekil sayısı. `0`: TCP eş adresi kullanılır, `X-Forwarded-For` yok sayılır. `N`: başlığın sağdan N. girdisi istemcidir (daha soldakiler istemci girdisidir, güvenilmez) |

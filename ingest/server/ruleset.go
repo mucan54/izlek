@@ -17,10 +17,9 @@ import (
 // plane as flags/<token>.json. SDKs download them from <flagsHost>/flags/…,
 // and flagsHost defaults to the ingestion host, so the node serves the file
 // itself: a small in-memory copy per known token, refreshed from the store
-// at most every rulesetTTL. A CDN in front can cache it further (the
+// at most every Config.FlagsCache. A CDN in front can cache it further (the
 // response carries ETag and Cache-Control).
 const (
-	rulesetTTL      = 30 * time.Second
 	rulesetFetchMax = 5 * time.Second
 	rulesetMaxAge   = "public, max-age=60"
 )
@@ -89,7 +88,7 @@ func (s *Server) handleRuleset(r *http.Request, rc *reqCtx) reply {
 	}
 
 	e, cached := s.rulesets.get(token)
-	if !cached || rc.recv.Sub(e.at) > rulesetTTL {
+	if !cached || rc.recv.Sub(e.at) > s.cfg.FlagsCache {
 		ctx, cancel := context.WithTimeout(r.Context(), rulesetFetchMax)
 		data, _, err := s.store.Get(ctx, "flags/"+token+".json", nil)
 		cancel()

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <title>izlek e2e</title>
+    <style>
+      body { margin: 0; font: 16px/1.4 sans-serif; background: #ffffff; color: #111111; }
+      .card { background: #eeeeff; margin: 16px; padding: 16px; border: 1px solid #8888cc; }
+      input { display: block; margin: 8px 0; width: 240px; }
+    </style>
+  </head>
+  <body>
+    <h1 id="title">Uçtan uca mağaza</h1>
+    <div class="card">
+      <input id="name" type="text" placeholder="Adınız" />
+      <input id="pw" type="password" />
+      <button id="buy" data-track="buy_click" data-track-plan="pro">Satın al</button>
+      <p id="status">hazır</p>
+    </div>
+    <script src="/sdk/izlek.min.js"></script>
+    <script src="/sdk/izlek-flags.min.js"></script>
+    <script src="/sdk/izlek-replay.min.js"></script>
+    <script>
+      const q = new URLSearchParams(location.search)
+      // Default configuration on purpose: flags come from the ingestion host.
+      izlek.init({ token: q.get('token'), host: q.get('host'), flushIntervalMs: 200 })
+      window.flagsReady = izlekFlags.initFlags()
+      if (q.get('replay')) izlekReplay.startReplay({ sampleRate: 1 })
+    </script>
+  </body>
+</html>

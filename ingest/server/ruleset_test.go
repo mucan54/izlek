@@ -78,7 +78,7 @@ func TestRulesetEndpoint(t *testing.T) {
 	}
 	// … and then with a new ETag.
 	e, _ := h.srv.rulesets.get("pk_test")
-	e.at = e.at.Add(-2 * rulesetTTL)
+	e.at = e.at.Add(-2 * h.cfg.FlagsCache)
 	h.srv.rulesets.put("pk_test", e)
 	resp = h.do("GET", "/flags/pk_test.json", nil, "If-None-Match", etag)
 	if got := readAll(t, resp); resp.StatusCode != 200 || got != `{"v":4,"flags":[]}` || resp.Header.Get("ETag") == etag {
@@ -91,7 +91,7 @@ func TestRulesetEndpoint(t *testing.T) {
 		t.Fatalf("still cached: %d", st)
 	}
 	e, _ = h.srv.rulesets.get("pk_site")
-	e.at = e.at.Add(-2 * rulesetTTL)
+	e.at = e.at.Add(-2 * h.cfg.FlagsCache)
 	h.srv.rulesets.put("pk_site", e)
 	if st := h.status("GET", "/flags/pk_site.json", nil); st != 404 {
 		t.Fatalf("deleted ruleset: %d", st)

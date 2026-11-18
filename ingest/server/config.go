@@ -31,6 +31,7 @@ type Config struct {
 
 	TokensKey   string        // LA_TOKENS_KEY
 	TokensPoll  time.Duration // LA_TOKENS_POLL_SECONDS
+	FlagsCache  time.Duration // LA_FLAGS_CACHE_SECONDS: how long a served ruleset copy is reused
 	TokensCache string        // LA_TOKENS_CACHE
 
 	CompatPostHog  bool   // LA_COMPAT_POSTHOG
@@ -63,6 +64,7 @@ func DefaultConfig() Config {
 		UploadWorkers:         2,
 		TokensKey:             "control/tokens.json",
 		TokensPoll:            30 * time.Second,
+		FlagsCache:            30 * time.Second,
 		CompatPostHog:         true,
 		RateToken:             2000,
 		RateIP:                50,
@@ -118,6 +120,7 @@ func FromEnvFunc(getenv func(string) string) (Config, error) {
 	num("LA_WAL_UPLOAD_CONCURRENCY", 1, func(f float64) { c.UploadWorkers = int(f) })
 	str("LA_TOKENS_KEY", &c.TokensKey)
 	seconds("LA_TOKENS_POLL_SECONDS", 0.001, &c.TokensPoll)
+	seconds("LA_FLAGS_CACHE_SECONDS", 0.001, &c.FlagsCache)
 	str("LA_TOKENS_CACHE", &c.TokensCache)
 	if v := getenv("LA_COMPAT_POSTHOG"); v != "" {
 		b, err := strconv.ParseBool(strings.ToLower(v))
