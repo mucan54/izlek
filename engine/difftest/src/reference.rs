@@ -64,7 +64,8 @@ pub async fn context(rows: &[Row], cols: Columns) -> SessionContext {
     let schema = Arc::new(Schema::new(fields));
     let batch = RecordBatch::try_new(schema.clone(), arrays).expect("reference batch");
     let ctx = SessionContext::new();
-    ctx.register_table("t", Arc::new(MemTable::try_new(schema, vec![vec![batch]]).expect("mem table"))).expect("register");
+    ctx.register_table("t", Arc::new(MemTable::try_new(schema, vec![vec![batch]]).expect("mem table")))
+        .expect("register");
     ctx
 }
 
@@ -107,7 +108,8 @@ fn opt_string(v: &Value) -> Option<String> {
     v.as_str().map(str::to_owned)
 }
 
-const E_CTE: &str = "e AS (SELECT *, row_number() OVER (PARTITION BY person_key ORDER BY ts, uuid) AS rn FROM t WHERE g)";
+const E_CTE: &str =
+    "e AS (SELECT *, row_number() OVER (PARTITION BY person_key ORDER BY ts, uuid) AS rn FROM t WHERE g)";
 
 // ---------------------------------------------------------------------------
 // Funnel
@@ -118,13 +120,20 @@ pub type FunnelCounts = BTreeMap<Option<String>, Vec<u64>>;
 
 /// Funnel counts via SQL. With `by_breakdown` the map is keyed by the
 /// breakdown value (`Some(None)`-style null bucket is the `None` key).
-pub async fn funnel_sql(ctx: &SessionContext, steps: usize, window_ms: i64, order: &str, by_breakdown: bool) -> FunnelCounts {
+pub async fn funnel_sql(
+    ctx: &SessionContext,
+    steps: usize,
+    window_ms: i64,
+    order: &str,
+    by_breakdown: bool,
+) -> FunnelCounts {
     let mut out: FunnelCounts = BTreeMap::new();
     let mut add = |bd: Option<String>, k: usize, c: u64| {
         out.entry(bd).or_insert_with(|| vec![0; steps])[k] += c;
     };
     if order == "any" {
-        let distinct_steps: Vec<String> = (0..steps).map(|j| format!("max(CASE WHEN b.s{j} THEN 1 ELSE 0 END)")).collect();
+        let distinct_steps: Vec<String> =
+            (0..steps).map(|j| format!("max(CASE WHEN b.s{j} THEN 1 ELSE 0 END)")).collect();
         let any_step: Vec<String> = (0..steps).map(|j| format!("a.s{j}")).collect();
         let (bd_w, bd_p) = if by_breakdown { (", a.bd AS bd", ", bd") } else { ("", "") };
         let sql = format!(
@@ -141,7 +150,11 @@ pub async fn funnel_sql(ctx: &SessionContext, steps: usize, window_ms: i64, orde
             grp = if by_breakdown { "bd," } else { "" },
         );
         for row in query(ctx, &sql).await {
-            let (bd, best, c) = (opt_string(&row[0]), row[1].as_i64().unwrap() as usize, row[2].as_u64().unwrap_or_else(|| row[2].as_i64().unwrap() as u64));
+            let (bd, best, c) = (
+                opt_string(&row[0]),
+                row[1].as_i64().unwrap() as usize,
+                row[2].as_u64().unwrap_or_else(|| row[2].as_i64().unwrap() as u64),
+            );
             for k in 0..best.min(steps) {
                 add(bd.clone(), k, c);
             }
@@ -156,7 +169,10 @@ pub async fn funnel_sql(ctx: &SessionContext, steps: usize, window_ms: i64, orde
             } else {
                 format!("(e{j}.ts > e{p}.ts OR (e{j}.ts = e{p}.ts AND e{j}.uuid > e{p}.uuid))", p = j - 1)
             };
-            joins.push_str(&format!(" JOIN e e{j} ON e{j}.person_key = e1.person_key AND e{j}.s{s} AND {follows}", s = j - 1));
+            joins.push_str(&format!(
+                " JOIN e e{j} ON e{j}.person_key = e1.person_key AND e{j}.s{s} AND {follows}",
+                s = j - 1
+            ));
         }
         let sql = format!(
             "WITH {E_CTE} SELECT {sel} count(DISTINCT e1.person_key) FROM e e1{joins} \
@@ -191,7 +207,13 @@ struct Ev<'a> {
 /// Highest step reached after each prefix of `events` plus the durations
 /// recorded on first reach, for chains that must start on a row accepted by
 /// `starts`.
-fn person_ordered(events: &[Ev], steps: usize, w: i64, strict: bool, starts: &dyn Fn(&Ev) -> bool) -> (usize, Vec<Option<f64>>) {
+fn person_ordered(
+    events: &[Ev],
+    steps: usize,
+    w: i64,
+    strict: bool,
+    starts: &dyn Fn(&Ev) -> bool,
+) -> (usize, Vec<Option<f64>>) {
     let n = events.len();
     // f[k][i]: latest start among chains of length k+1 ending exactly at row i.
     let mut f = vec![vec![None::<i64>; n]; steps];
@@ -208,7 +230,8 @@ fn person_ordered(events: &[Ev], steps: usize, w: i64, strict: bool, starts: &dy
                 }
                 continue;
             }
-            let candidates: Box<dyn Iterator<Item = usize>> = if strict { Box::new(i.checked_sub(1).into_iter()) } else { Box::new(0..i) };
+            let candidates: Box<dyn Iterator<Item = usize>> =
+                if strict { Box::new(i.checked_sub(1).into_iter()) } else { Box::new(0..i) };
             f[k][i] = candidates.filter_map(|j| f[k - 1][j]).filter(|s| events[i].ts - s <= w).max();
         }
         for k in 0..steps {
@@ -357,7 +380,10 @@ pub async fn retention_sql(ctx: &SessionContext, period: &str) -> RetentionRef {
         rp = trunc("x.ts"),
     );
     for row in query(ctx, &returns).await {
-        out.entry(row[0].as_i64().unwrap()).or_default().1.insert(row[1].as_i64().unwrap(), row[2].as_i64().unwrap() as u64);
+        out.entry(row[0].as_i64().unwrap())
+            .or_default()
+            .1
+            .insert(row[1].as_i64().unwrap(), row[2].as_i64().unwrap() as u64);
     }
     out
 }
@@ -378,7 +404,12 @@ pub struct TrendCell {
 
 /// `(breakdown, bucket start ms) → cell` for one series; expects flag `m{i}`
 /// and number `v{i}`.
-pub async fn trends_sql(ctx: &SessionContext, series: usize, interval: &str, by_breakdown: bool) -> HashMap<(Option<String>, i64), TrendCell> {
+pub async fn trends_sql(
+    ctx: &SessionContext,
+    series: usize,
+    interval: &str,
+    by_breakdown: bool,
+) -> HashMap<(Option<String>, i64), TrendCell> {
     let sql = format!(
         "SELECT CAST(date_trunc('{interval}', to_timestamp_millis(ts)) AS BIGINT) AS b, {bd} AS bd, \
                 count(*), count(DISTINCT person_key), sum(v{series}), avg(v{series}), min(v{series}), max(v{series}) \
@@ -404,5 +435,8 @@ pub async fn trends_sql(ctx: &SessionContext, series: usize, interval: &str, by_
 
 /// Evaluates the per-row inputs for a request with the naive evaluator.
 pub fn flags_for(rows: &[Row], persons: &Persons, selectors: &[(&str, &Value)]) -> Vec<(String, Vec<bool>)> {
-    selectors.iter().map(|(name, sel)| (name.to_string(), rows.iter().map(|r| model::matches(sel, r, persons)).collect())).collect()
+    selectors
+        .iter()
+        .map(|(name, sel)| (name.to_string(), rows.iter().map(|r| model::matches(sel, r, persons)).collect()))
+        .collect()
 }

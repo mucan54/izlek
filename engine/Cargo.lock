@@ -2050,7 +2050,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "zstd",
 ]
 
 [[package]]
@@ -2130,15 +2129,11 @@ dependencies = [
 name = "la-shipper"
 version = "0.1.0"
 dependencies = [
- "arrow",
  "bytes",
  "chrono",
- "futures",
  "la-codec",
  "la-compactor",
  "la-core",
- "parquet",
- "rand 0.9.5",
  "serde",
  "serde_json",
  "tempfile",

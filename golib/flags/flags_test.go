@@ -192,6 +192,8 @@ func TestOperators(t *testing.T) {
 		{`{"prop":"a","op":"regex","value":"^a.c$"}`, `{"a":"abc"}`, true},
 		{`{"prop":"a","op":"regex","value":"b"}`, `{"a":"abc"}`, true},
 		{`{"prop":"a","op":"regex","value":"("}`, `{"a":"("}`, false},
+		{`{"prop":"a","op":"regex","value":42}`, `{"a":"x42y"}`, true},
+		{`{"prop":"a","op":"is_set","value":true}`, `{"a":0}`, true},
 		// semver
 		{`{"prop":"a","op":"semver_gte","value":"3.2.0"}`, `{"a":"3.10"}`, true},
 		{`{"prop":"a","op":"semver_gte","value":"3.2"}`, `{"a":"v3.2.0-rc.1"}`, true},
@@ -262,6 +264,12 @@ func TestParseRulesValidation(t *testing.T) {
 		`[{"when":{"prop":"email","op":"regex","value":"@example\\.com$"}}]`,
 		`[{"when":{"prop":"email","op":"regex","value":"^(?:a|b)[0-9]{2,3}\\d+\\s*$"}}]`,
 		`[{"when":{"prop":"v","op":"semver_lt","value":"v4"}}]`,
+		// The dashboard sends is_set with "value": true and numeric-looking
+		// values as JSON numbers, whatever the operator.
+		`[{"when":{"prop":"plan","op":"is_set","value":true}}]`,
+		`[{"when":{"prop":"code","op":"regex","value":42}}]`,
+		`[{"when":{"prop":"code","op":"contains","value":7}}]`,
+		`[{"when":{"prop":"code","op":"eq","value":false}}]`,
 		`[{"when":{"prop":"v","op":"semver_lt","value":4}}]`,
 		`[{"when":{"or":[]}}]`,
 		`[{"variants":[]}]`,
@@ -311,7 +319,7 @@ func TestParseRulesValidation(t *testing.T) {
 		{`[{"when":{"prop":"a","op":"gt","value":"abc"}}]`, "rules[0].when.value"},
 		{`[{"when":{"prop":"a","op":"gt","value":true}}]`, "rules[0].when.value"},
 		{`[{"when":{"prop":"a","op":"regex","value":"("}}]`, "rules[0].when.value"},
-		{`[{"when":{"prop":"a","op":"regex","value":5}}]`, "rules[0].when.value"},
+		{`[{"when":{"prop":"a","op":"regex","value":[5]}}]`, "rules[0].when.value"},
 		{`[{"when":{"prop":"a","op":"regex","value":"(?i)x"}}]`, "rules[0].when.value"},
 		{`[{"when":{"prop":"a","op":"regex","value":"(?=x)"}}]`, "rules[0].when.value"},
 		{`[{"when":{"prop":"a","op":"regex","value":"\\pL"}}]`, "rules[0].when.value"},

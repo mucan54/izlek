@@ -11,11 +11,11 @@ use datafusion::error::DataFusionError;
 use datafusion::execution::memory_pool::{GreedyMemoryPool, MemoryConsumer, MemoryPool, MemoryReservation};
 use datafusion::execution::runtime_env::RuntimeEnvBuilder;
 use datafusion::execution::{SendableRecordBatchStream, SessionStateBuilder, TaskContext};
+use datafusion::logical_expr::lit;
 use datafusion::physical_expr::expressions::Column as PhysColumn;
 use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
 use datafusion::physical_plan::sorts::sort_preserving_merge::SortPreservingMergeExec;
 use datafusion::physical_plan::{ExecutionPlan, ExecutionPlanProperties};
-use datafusion::logical_expr::lit;
 use datafusion::prelude::{ident, SessionConfig, SessionContext};
 use futures::StreamExt;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -100,7 +100,8 @@ impl QueryCx {
             o.optimizer.prefer_existing_sort = true;
             o.execution.time_zone = Some("+00:00".into());
         }
-        let state = SessionStateBuilder::new().with_config(config).with_runtime_env(runtime).with_default_features().build();
+        let state =
+            SessionStateBuilder::new().with_config(config).with_runtime_env(runtime).with_default_features().build();
         let ctx = SessionContext::new_with_state(state);
         let scan = ScanContext {
             snap: Arc::clone(&snap),
@@ -147,7 +148,11 @@ impl QueryCx {
         let mut points: Vec<String> = cfg.person_split.clone();
         if points.is_empty() && cfg.partitions > 1 {
             let snap = &self.snap;
-            let files = snap.days.iter().flat_map(|m| m.files.iter()).filter(|f| f.max_ts >= snap.from_ms && f.min_ts < snap.to_ms);
+            let files = snap
+                .days
+                .iter()
+                .flat_map(|m| m.files.iter())
+                .filter(|f| f.max_ts >= snap.from_ms && f.min_ts < snap.to_ms);
             let rows: u64 = files.clone().map(|f| f.rows).sum();
             if rows >= cfg.parallel_min_rows.max(1) {
                 if let Some(largest) = files.max_by_key(|f| f.rows) {
@@ -169,7 +174,8 @@ impl QueryCx {
 
     async fn split_points(&self, key: &str, size: u64, parts: usize) -> ApiResult<Vec<String>> {
         let meta = self.engine.files.metadata(key, size).await.map_err(|e| ApiError::from(DataFusionError::from(e)))?;
-        let Some(col) = meta.file_metadata().schema_descr().columns().iter().position(|c| c.path().string() == "person_key")
+        let Some(col) =
+            meta.file_metadata().schema_descr().columns().iter().position(|c| c.path().string() == "person_key")
         else {
             return Ok(Vec::new());
         };

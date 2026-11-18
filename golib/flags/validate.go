@@ -241,14 +241,12 @@ func validateCond(c *Cond, path string, nodes *int) error {
 		}
 		return nil
 	case "regex":
-		s, ok := v.(string)
-		if !ok {
-			return errAt(vp, "must be a string")
+		// The pattern is str(value): clients that turn numeric-looking input
+		// into JSON numbers (or true/false into booleans) still mean text.
+		if err := validateScalar(v, vp); err != nil {
+			return err
 		}
-		if len(s) > MaxValueLen {
-			return errAt(vp, "pattern longer than %d bytes", MaxValueLen)
-		}
-		if err := PortableRegex(s); err != nil {
+		if err := PortableRegex(toStr(v)); err != nil {
 			return errAt(vp, "%s", err.Error())
 		}
 		return nil

@@ -47,6 +47,28 @@ impl ProjectEnv {
         let tombstones = TombstoneSet::build(&tombstone_list, &identity, 0);
         Ok(Self { project, schema, identity, tombstone_list, tombstones })
     }
+
+    /// Brings the state up to date (identity files are read incrementally).
+    ///
+    /// A job must use state at least as new as every file it merges: refresh
+    /// **after** taking the manifest snapshot that names the inputs. Each
+    /// input was written by someone who had seen fewer (or the same) links,
+    /// so every row is then resolved and de-duplicated under one map.
+    pub async fn refresh(&mut self, store: &Store) -> Result<()> {
+        self.identity.refresh(store, self.project).await?;
+        self.schema = ProjectSchema::load(store, self.project).await?;
+        self.tombstone_list = tombstone::load_all(store, self.project).await?;
+        self.tombstones = TombstoneSet::build(&self.tombstone_list, &self.identity, 0);
+        Ok(())
+    }
+
+    /// [`refresh`](Self::refresh) for a shared handle (clones only if the
+    /// handle is still in use elsewhere).
+    pub async fn refreshed(env: Arc<ProjectEnv>, store: &Store) -> Result<Arc<ProjectEnv>> {
+        let mut owned = Arc::try_unwrap(env).unwrap_or_else(|shared| (*shared).clone());
+        owned.refresh(store).await?;
+        Ok(Arc::new(owned))
+    }
 }
 
 /// Files merged together into outputs of one level.

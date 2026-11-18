@@ -139,7 +139,10 @@ fn random_props(rng: &mut StdRng) -> BTreeMap<String, PVal> {
         p.insert("n".into(), PVal::Int(rng.random_range(1..5)));
     }
     if rng.random_bool(0.2) {
-        p.insert("flag".into(), if rng.random_bool(0.8) { PVal::Bool(rng.random_bool(0.5)) } else { PVal::Str("true".into()) });
+        p.insert(
+            "flag".into(),
+            if rng.random_bool(0.8) { PVal::Bool(rng.random_bool(0.5)) } else { PVal::Str("true".into()) },
+        );
     }
     if rng.random_bool(0.1) {
         p.insert("we\"ird key".into(), PVal::Str("q\"uo\\te\n".into()));
@@ -165,7 +168,8 @@ fn physical(e: &Raw, map: &IdentityMap, promoted: &[PromotedColumn]) -> EventRow
         }
         cells.push(cell);
     }
-    let json: serde_json::Map<String, serde_json::Value> = props.iter().map(|(k, v)| (k.clone(), v.to_json())).collect();
+    let json: serde_json::Map<String, serde_json::Value> =
+        props.iter().map(|(k, v)| (k.clone(), v.to_json())).collect();
     let mut row = EventRow {
         uuid: e.uuid,
         ts: e.ts,
@@ -184,6 +188,7 @@ fn physical(e: &Raw, map: &IdentityMap, promoted: &[PromotedColumn]) -> EventRow
     row
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn write_file(
     store: &Store,
     project: u32,
@@ -220,9 +225,9 @@ pub async fn generate(store: &Store, cfg: &GenConfig) -> Dataset {
         let user = format!("user{u:02}");
         for d in 0..rng.random_range(1..=2) {
             let identify_at = match rng.random_range(0..10) {
-                0..=2 => Some(from_ms),                                  // identified from the start
-                3..=8 => Some(rng.random_range(from_ms..to_ms)),         // identifies mid-way
-                _ => None,                                               // never (stays anonymous)
+                0..=2 => Some(from_ms),                          // identified from the start
+                3..=8 => Some(rng.random_range(from_ms..to_ms)), // identifies mid-way
+                _ => None,                                       // never (stays anonymous)
             };
             devices.push(Device { anon: format!("dev-{u:02}-{d}"), user: Some(user.clone()), identify_at });
         }
@@ -374,7 +379,9 @@ pub async fn generate(store: &Store, cfg: &GenConfig) -> Dataset {
                 _ => None,
             })
             .collect();
-        let out = identity::append_delta(store, project, "1-0", plan as u64 + 1, candidates, &mut map).await.expect("identity delta");
+        let out = identity::append_delta(store, project, "1-0", plan as u64 + 1, candidates, &mut map)
+            .await
+            .expect("identity delta");
         stats.links += out.added;
         let identity_version = out.version;
 
@@ -426,7 +433,9 @@ pub async fn generate(store: &Store, cfg: &GenConfig) -> Dataset {
                 let rows: Vec<EventRow> = shard.iter().map(|e| physical(e, &map, cols)).collect();
                 stats.physical_rows += rows.len();
                 stats.rows_needing_rewrite += rows.iter().filter(|r| r.person_key.starts_with("a:")).count();
-                let entry = write_file(store, project, &day, 0, &format!("1-0-{plan:04}{i}"), rows, cols, sv, identity_version).await;
+                let entry =
+                    write_file(store, project, &day, 0, &format!("1-0-{plan:04}{i}"), rows, cols, sv, identity_version)
+                        .await;
                 manifests.entry(day.clone()).or_default().push(entry);
                 // The new file has had no tombstone applied, so the manifest
                 // may no longer claim any ("applied to all files").
@@ -437,35 +446,33 @@ pub async fn generate(store: &Store, cfg: &GenConfig) -> Dataset {
         }
 
         // Tombstones issued during this plan.
-        if plan + 1 < cfg.plans || rng.random_bool(0.5) {
-            if rng.random_bool(0.45) {
-                let victim = pick(&mut rng, &devices);
-                // A user is only deleted once all of their devices' links are
-                // known, so "the user's anonymous ids" means the same thing
-                // to a compaction now and to a query later.
-                let settled = |u: &String| {
-                    devices
-                        .iter()
-                        .filter(|d| d.user.as_ref() == Some(u))
-                        .all(|d| d.identify_at.is_none() || map.resolve(&d.anon).is_some())
-                };
-                let t = match &victim.user {
-                    Some(u) if settled(u) && rng.random_bool(0.7) => Tombstone {
-                        id: format!("del{plan}"),
-                        ts_ms: (plan as i64 + 1) * 1000,
-                        person_keys: vec![format!("u:{u}")],
-                        anon_ids: vec![],
-                    },
-                    _ => Tombstone {
-                        id: format!("del{plan}"),
-                        ts_ms: (plan as i64 + 1) * 1000,
-                        person_keys: if rng.random_bool(0.5) { vec![format!("a:{}", victim.anon)] } else { vec![] },
-                        anon_ids: vec![victim.anon.clone()],
-                    },
-                };
-                store.put_json(&tombstone_key(project, &t), &t).await.expect("tombstone");
-                tombstones.push(t);
-            }
+        if (plan + 1 < cfg.plans || rng.random_bool(0.5)) && rng.random_bool(0.45) {
+            let victim = pick(&mut rng, &devices);
+            // A user is only deleted once all of their devices' links are
+            // known, so "the user's anonymous ids" means the same thing
+            // to a compaction now and to a query later.
+            let settled = |u: &String| {
+                devices
+                    .iter()
+                    .filter(|d| d.user.as_ref() == Some(u))
+                    .all(|d| d.identify_at.is_none() || map.resolve(&d.anon).is_some())
+            };
+            let t = match &victim.user {
+                Some(u) if settled(u) && rng.random_bool(0.7) => Tombstone {
+                    id: format!("del{plan}"),
+                    ts_ms: (plan as i64 + 1) * 1000,
+                    person_keys: vec![format!("u:{u}")],
+                    anon_ids: vec![],
+                },
+                _ => Tombstone {
+                    id: format!("del{plan}"),
+                    ts_ms: (plan as i64 + 1) * 1000,
+                    person_keys: if rng.random_bool(0.5) { vec![format!("a:{}", victim.anon)] } else { vec![] },
+                    anon_ids: vec![victim.anon.clone()],
+                },
+            };
+            store.put_json(&tombstone_key(project, &t), &t).await.expect("tombstone");
+            tombstones.push(t);
         }
 
         // Compaction of some days: current identity, dedupe, tombstones so far.
@@ -502,7 +509,9 @@ pub async fn generate(store: &Store, cfg: &GenConfig) -> Dataset {
                 };
                 for (i, part) in parts.into_iter().enumerate() {
                     let name = format!("{:08}-{i:03}", plan + 1);
-                    entries.push(write_file(store, project, day, 2, &name, part, &promoted, schema_version, map.version()).await);
+                    entries.push(
+                        write_file(store, project, day, 2, &name, part, &promoted, schema_version, map.version()).await,
+                    );
                     stats.files += 1;
                 }
             }
@@ -513,7 +522,8 @@ pub async fn generate(store: &Store, cfg: &GenConfig) -> Dataset {
 
         // Publish the manifests as they stand after this plan.
         for day in &days {
-            let (Some(files), tomb) = (manifests.get(day).cloned(), manifest_tomb.get(day).copied().unwrap_or(0)) else {
+            let (Some(files), tomb) = (manifests.get(day).cloned(), manifest_tomb.get(day).copied().unwrap_or(0))
+            else {
                 continue;
             };
             commit_day(store, project, day, |m| {

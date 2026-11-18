@@ -96,7 +96,12 @@ fn random_range(rng: &mut StdRng, ds: &Dataset) -> (Value, Value, i64, i64) {
         5..=6 => {
             let a = rng.random_range(0..ds.days.len());
             let b = rng.random_range(a..ds.days.len());
-            (json!(ds.days[a]), json!(ds.days[b]), ds.from_ms + a as i64 * time::DAY_MS, ds.from_ms + (b as i64 + 1) * time::DAY_MS)
+            (
+                json!(ds.days[a]),
+                json!(ds.days[b]),
+                ds.from_ms + a as i64 * time::DAY_MS,
+                ds.from_ms + (b as i64 + 1) * time::DAY_MS,
+            )
         }
         // Arbitrary instants (`to` exclusive), often on an event's timestamp.
         _ => {
@@ -185,7 +190,21 @@ fn random_selector(rng: &mut StdRng, ds: &Dataset, null_event: f64) -> Value {
 }
 
 fn random_breakdown(rng: &mut StdRng) -> Option<&'static str> {
-    rng.random_bool(0.5).then(|| *pick(rng, &["platform", "country", "props.plan", "props.amount", "person.tier", "event", "props.flag", "props.missing"]))
+    rng.random_bool(0.5).then(|| {
+        *pick(
+            rng,
+            &[
+                "platform",
+                "country",
+                "props.plan",
+                "props.amount",
+                "person.tier",
+                "event",
+                "props.flag",
+                "props.missing",
+            ],
+        )
+    })
 }
 
 struct Case<'a> {
@@ -213,7 +232,9 @@ fn in_range(ds: &Dataset, from: i64, to: i64) -> Vec<Row> {
 }
 
 async fn run(svc: &Service, project: u32, kind: Kind, body: &Value, seed: u64) -> Value {
-    svc.query(project, kind, body).await.unwrap_or_else(|e| panic!("seed {seed}: {} failed: {e}\n  request: {body}", kind.name()))
+    svc.query(project, kind, body)
+        .await
+        .unwrap_or_else(|e| panic!("seed {seed}: {} failed: {e}\n  request: {body}", kind.name()))
 }
 
 fn close(a: f64, b: f64) -> bool {
@@ -250,24 +271,31 @@ async fn check_funnel(svc: &Service, ds: &Dataset, rng: &mut StdRng, seed: u64, 
     let names: Vec<String> = (0..n_steps).map(|j| format!("s{j}")).collect();
     let selectors: Vec<(&str, &Value)> = names.iter().map(String::as_str).zip(steps.iter()).collect();
     let flags = reference::flags_for(&rows, &ds.persons, &selectors);
-    let bd: Option<Vec<Option<String>>> = breakdown.map(|b| rows.iter().map(|r| model::text_of(r, &ds.persons, b)).collect());
+    let bd: Option<Vec<Option<String>>> =
+        breakdown.map(|b| rows.iter().map(|r| model::text_of(r, &ds.persons, b)).collect());
 
     // Reference 1: plain SQL (counts).
-    let ctx = reference::context(&rows, Columns { g: g.clone(), flags: flags.clone(), bd: bd.clone(), nums: vec![] }).await;
+    let ctx =
+        reference::context(&rows, Columns { g: g.clone(), flags: flags.clone(), bd: bd.clone(), nums: vec![] }).await;
     let window_ms = window_s * 1000;
     let sql_total = reference::funnel_sql(&ctx, n_steps, window_ms, order, false).await;
     let sql_total = sql_total.get(&None).cloned().unwrap_or_else(|| vec![0; n_steps]);
     // Reference 2: brute force (counts again, plus durations).
     let kept: Vec<usize> = (0..rows.len()).filter(|i| g[*i]).collect();
     let kept_rows: Vec<&Row> = kept.iter().map(|i| &rows[*i]).collect();
-    let masks: Vec<u32> = kept.iter().map(|i| (0..n_steps).fold(0u32, |m, j| m | (u32::from(flags[j].1[*i]) << j))).collect();
+    let masks: Vec<u32> =
+        kept.iter().map(|i| (0..n_steps).fold(0u32, |m, j| m | (u32::from(flags[j].1[*i]) << j))).collect();
     let kept_bd: Option<Vec<Option<String>>> = bd.as_ref().map(|b| kept.iter().map(|i| b[*i].clone()).collect());
-    let (brute_total, brute_groups) = reference::brute_funnel(&kept_rows, &masks, kept_bd.as_deref(), n_steps, window_ms, order);
+    let (brute_total, brute_groups) =
+        reference::brute_funnel(&kept_rows, &masks, kept_bd.as_deref(), n_steps, window_ms, order);
     case.check("SQL reference vs brute force (total counts)", &sql_total, &brute_total.counts);
 
     let read = |steps_json: &Value| -> (Vec<u64>, Vec<Option<f64>>) {
         let arr = steps_json.as_array().expect("steps array");
-        (arr.iter().map(|s| s["count"].as_u64().unwrap()).collect(), arr.iter().map(|s| s["median_seconds"].as_f64()).collect())
+        (
+            arr.iter().map(|s| s["count"].as_u64().unwrap()).collect(),
+            arr.iter().map(|s| s["median_seconds"].as_f64()).collect(),
+        )
     };
     let (counts, medians) = read(&actual["steps"]);
     case.check("total step counts", &sql_total, &counts);
@@ -293,7 +321,8 @@ async fn check_funnel(svc: &Service, ds: &Dataset, rng: &mut StdRng, seed: u64, 
         (None, None) => {}
         (Some(_), Some(Value::Array(groups))) => {
             let sql_groups = reference::funnel_sql(&ctx, n_steps, window_ms, order, true).await;
-            let brute_counts: BTreeMap<Option<String>, Vec<u64>> = brute_groups.iter().map(|(k, v)| (k.clone(), v.counts.clone())).collect();
+            let brute_counts: BTreeMap<Option<String>, Vec<u64>> =
+                brute_groups.iter().map(|(k, v)| (k.clone(), v.counts.clone())).collect();
             case.check("SQL reference vs brute force (breakdown counts)", &sql_groups, &brute_counts);
             let mut got: BTreeMap<Option<String>, Vec<u64>> = BTreeMap::new();
             let mut last_count = u64::MAX;
@@ -418,7 +447,11 @@ async fn check_trends(svc: &Service, ds: &Dataset, rng: &mut StdRng, seed: u64, 
     let n_series = rng.random_range(1..=4usize);
     let mut series: Vec<Value> = Vec::new();
     for i in 0..n_series {
-        let agg = if force_unique && i == 0 { "unique" } else { *pick(rng, &["count", "unique", "unique", "sum", "avg", "min", "max"]) };
+        let agg = if force_unique && i == 0 {
+            "unique"
+        } else {
+            *pick(rng, &["count", "unique", "unique", "sum", "avg", "min", "max"])
+        };
         let mut s = random_selector(rng, ds, 0.4);
         s["agg"] = json!(agg);
         if matches!(agg, "sum" | "avg" | "min" | "max") {
@@ -478,7 +511,8 @@ async fn check_trends(svc: &Service, ds: &Dataset, rng: &mut StdRng, seed: u64, 
             }
         };
         let mine: Vec<&Value> = out.iter().filter(|o| o["index"] == json!(i)).collect();
-        let read = |o: &Value| -> Vec<Option<f64>> { o["values"].as_array().unwrap().iter().map(Value::as_f64).collect() };
+        let read =
+            |o: &Value| -> Vec<Option<f64>> { o["values"].as_array().unwrap().iter().map(Value::as_f64).collect() };
         let same = |want: &[Option<f64>], got: &[Option<f64>]| {
             want.len() == got.len()
                 && want.iter().zip(got).all(|(w, g)| match (w, g) {
@@ -509,7 +543,11 @@ async fn check_trends(svc: &Service, ds: &Dataset, rng: &mut StdRng, seed: u64, 
         let mut ranked: Vec<(f64, Option<String>)> = by_value
             .iter()
             .map(|(v, cs)| {
-                let total = if agg == "sum" { cs.iter().map(|(_, c)| c.sum.unwrap_or(0.0)).sum() } else { cs.iter().map(|(_, c)| c.n as f64).sum() };
+                let total = if agg == "sum" {
+                    cs.iter().map(|(_, c)| c.sum.unwrap_or(0.0)).sum()
+                } else {
+                    cs.iter().map(|(_, c)| c.n as f64).sum()
+                };
                 (total, v.clone())
             })
             .collect();
@@ -536,7 +574,11 @@ async fn check_trends(svc: &Service, ds: &Dataset, rng: &mut StdRng, seed: u64, 
             let key = o["breakdown"].as_str().map(str::to_owned);
             let want: Vec<Option<f64>> = starts.iter().map(|b| value_of(cells.get(&(key.clone(), *b)))).collect();
             if !by_value.contains_key(&key) {
-                case.fail(&format!("series {i}: unexpected breakdown value"), &by_value.keys().collect::<Vec<_>>(), &key);
+                case.fail(
+                    &format!("series {i}: unexpected breakdown value"),
+                    &by_value.keys().collect::<Vec<_>>(),
+                    &key,
+                );
             }
             if !same(&want, &read(o)) {
                 case.fail(&format!("series {i} ({agg}) breakdown {key:?}"), &want, &read(o));
@@ -544,7 +586,11 @@ async fn check_trends(svc: &Service, ds: &Dataset, rng: &mut StdRng, seed: u64, 
             seen.insert(key);
         }
         if clear_cut {
-            let got: Vec<Option<String>> = mine.iter().filter(|o| o["breakdown"] != json!("$other")).map(|o| o["breakdown"].as_str().map(str::to_owned)).collect();
+            let got: Vec<Option<String>> = mine
+                .iter()
+                .filter(|o| o["breakdown"] != json!("$other"))
+                .map(|o| o["breakdown"].as_str().map(str::to_owned))
+                .collect();
             let got_set: BTreeSet<_> = got.iter().cloned().collect();
             let top_set: BTreeSet<_> = top.iter().cloned().collect();
             case.check(&format!("series {i}: top breakdown values"), &top_set, &got_set);
@@ -599,13 +645,16 @@ async fn check_trends(svc: &Service, ds: &Dataset, rng: &mut StdRng, seed: u64, 
 fn numbers_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
-        (Value::Object(x), Value::Object(y)) => x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| numbers_equal(v, w))),
+        (Value::Object(x), Value::Object(y)) => {
+            x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| numbers_equal(v, w)))
+        }
         _ => a == b,
     }
 }
 
 fn row_json(r: &Row) -> Value {
-    let props: serde_json::Map<String, Value> = r.props.iter().map(|(k, v): (&String, &PVal)| (k.clone(), v.to_json())).collect();
+    let props: serde_json::Map<String, Value> =
+        r.props.iter().map(|(k, v): (&String, &PVal)| (k.clone(), v.to_json())).collect();
     json!({
         "uuid": hex(&r.uuid), "ts": r.ts, "recv_ts": r.recv_ts, "event": r.event, "person_key": r.person_key,
         "anon_id": r.anon_id, "user_id": r.user_id, "session_id": r.session_id.as_ref().map(|s| hex(s)),
@@ -627,7 +676,7 @@ async fn check_events(svc: &Service, ds: &Dataset, rng: &mut StdRng, seed: u64) 
     let case = Case { seed, kind: "events", request: &base };
     let mut expected: Vec<Row> =
         in_range(ds, from_ms, to_ms).into_iter().filter(|r| model::passes(filter.as_ref(), r, &ds.persons)).collect();
-    expected.sort_by(|a, b| (a.ts, a.uuid).cmp(&(b.ts, b.uuid)));
+    expected.sort_by_key(|a| (a.ts, a.uuid));
     if order == "desc" {
         expected.reverse();
     }
@@ -694,7 +743,10 @@ async fn check_scan(svc: &Service, ds: &Dataset, seed: u64) {
     let v = run(svc, ds.project, Kind::Sql, &body, seed).await;
     let mut got: BTreeMap<String, (i64, i64, i64, i64)> = BTreeMap::new();
     for r in v["rows"].as_array().unwrap() {
-        got.insert(r[0].as_str().unwrap().to_owned(), (r[1].as_i64().unwrap(), r[2].as_i64().unwrap(), r[3].as_i64().unwrap(), r[4].as_i64().unwrap()));
+        got.insert(
+            r[0].as_str().unwrap().to_owned(),
+            (r[1].as_i64().unwrap(), r[2].as_i64().unwrap(), r[3].as_i64().unwrap(), r[4].as_i64().unwrap()),
+        );
     }
     let mut want: BTreeMap<String, (i64, i64, i64, i64)> = BTreeMap::new();
     for r in &ds.rows {
@@ -712,7 +764,12 @@ async fn check_scan(svc: &Service, ds: &Dataset, seed: u64) {
     );
     let case = Case { seed, kind: "sql/window", request: &body };
     let v = run(svc, ds.project, Kind::Sql, &body, seed).await;
-    let got: Vec<(String, i64)> = v["rows"].as_array().unwrap().iter().map(|r| (r[0].as_str().unwrap().to_owned(), r[1].as_i64().unwrap())).collect();
+    let got: Vec<(String, i64)> = v["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r[0].as_str().unwrap().to_owned(), r[1].as_i64().unwrap()))
+        .collect();
     let mut want = Vec::with_capacity(ds.rows.len());
     let mut rn = 0i64;
     for (i, r) in ds.rows.iter().enumerate() {
@@ -761,10 +818,10 @@ pub async fn run_seed(seed: u64, battery: Battery) -> Tally {
     let mut cfg = service_config();
     // Vary the execution strategy with the seed: person-range parallelism for
     // the ordered operators, and row filters inside vs. after the decoder.
-    if seed % 2 == 0 {
+    if seed.is_multiple_of(2) {
         cfg.person_split = vec!["a:anon-04".into(), "u:user03".into(), "u:user09".into()];
     }
-    cfg.pushdown_filters = seed % 3 != 0;
+    cfg.pushdown_filters = !seed.is_multiple_of(3);
     let svc = service_for(&store, cfg).await;
     let mut rng = StdRng::seed_from_u64(seed ^ 0x5eed_cafe);
     let mut tally = Tally {

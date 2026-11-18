@@ -230,7 +230,13 @@ async fn filter_trees_and_references_cannot_cross_projects() {
         for (path, body) in [
             ("/q/events", with(range(), json!({"filter": f}))),
             ("/q/trends", with(range(), json!({"filter": f, "series": [{"agg": "count"}], "breakdown": "props.k"}))),
-            ("/q/funnel", with(range(), json!({"steps": [{"event": "signup", "filter": f}, {"event": null, "filter": f}], "breakdown": "person_key"}))),
+            (
+                "/q/funnel",
+                with(
+                    range(),
+                    json!({"steps": [{"event": "signup", "filter": f}, {"event": null, "filter": f}], "breakdown": "person_key"}),
+                ),
+            ),
             ("/q/retention", with(range(), json!({"start": {"event": null, "filter": f}, "filter": f}))),
         ] {
             let r = app.post(KEY_A, path, body).await;
@@ -243,10 +249,19 @@ async fn filter_trees_and_references_cannot_cross_projects() {
         assert_eq!(v["events"], json!([]), "{f}");
     }
     // Breakdown / aggregation references are data, not SQL.
-    for reference in ["props.k' UNION SELECT * FROM persons --", "person.plan_b_only", "props.k)) OR ((1=1", "events.event", "person_key; DROP"] {
-        let r = app.post(KEY_A, "/q/trends", with(range(), json!({"series": [{"agg": "count"}], "breakdown": reference}))).await;
+    for reference in [
+        "props.k' UNION SELECT * FROM persons --",
+        "person.plan_b_only",
+        "props.k)) OR ((1=1",
+        "events.event",
+        "person_key; DROP",
+    ] {
+        let r = app
+            .post(KEY_A, "/q/trends", with(range(), json!({"series": [{"agg": "count"}], "breakdown": reference})))
+            .await;
         assert_no_leak(reference, &r);
-        let r = app.post(KEY_A, "/q/trends", with(range(), json!({"series": [{"agg": "sum", "prop": reference}]}))).await;
+        let r =
+            app.post(KEY_A, "/q/trends", with(range(), json!({"series": [{"agg": "sum", "prop": reference}]}))).await;
         assert_no_leak(reference, &r);
     }
     // No body field selects a project.
@@ -465,7 +480,11 @@ async fn schema_and_person_data_stay_per_project() {
     assert_eq!(r.json()["person_props"], json!(["plan"]));
     // B's identity links and person properties do not apply to A's rows.
     let v = app
-        .ok(KEY_A, "/q/trends", with(range(), json!({"series": [{"agg": "unique"}], "breakdown": "person.plan_b_only"})))
+        .ok(
+            KEY_A,
+            "/q/trends",
+            with(range(), json!({"series": [{"agg": "unique"}], "breakdown": "person.plan_b_only"})),
+        )
         .await;
     assert_eq!(v["series"].as_array().unwrap().len(), 1);
     assert_eq!(v["series"][0]["breakdown"], Value::Null);

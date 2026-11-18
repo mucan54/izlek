@@ -377,7 +377,9 @@ impl Compiler {
                     Op::Eq => self.eq(&v, value),
                     Op::Ne => datafusion::logical_expr::not(self.eq(&v, value)),
                     Op::In => self.any_of(&v, value.as_array().map(Vec::as_slice).unwrap_or(&[])),
-                    Op::NotIn => datafusion::logical_expr::not(self.any_of(&v, value.as_array().map(Vec::as_slice).unwrap_or(&[]))),
+                    Op::NotIn => datafusion::logical_expr::not(
+                        self.any_of(&v, value.as_array().map(Vec::as_slice).unwrap_or(&[])),
+                    ),
                     Op::Gt | Op::Gte | Op::Lt | Op::Lte => {
                         let Some(n) = json::request_value_num(value) else {
                             return lit(false);

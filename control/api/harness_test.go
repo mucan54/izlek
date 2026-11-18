@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -161,7 +162,7 @@ func (e *env) publish() {
 func (e *env) object(key string) (string, bool) {
 	e.t.Helper()
 	raw, _, err := e.store.Get(context.Background(), key, nil)
-	if err == objstore.ErrNotFound {
+	if errors.Is(err, objstore.ErrNotFound) {
 		return "", false
 	}
 	if err != nil {
@@ -261,7 +262,7 @@ func (c *client) do(method, path string, body any) *response {
 	return &response{t: c.e.t, Status: res.StatusCode, Header: res.Header, Body: rec.Body.Bytes(), req: method + " " + path}
 }
 
-func (c *client) get(path string) *response            { return c.do("GET", path, nil) }
+func (c *client) get(path string) *response             { return c.do("GET", path, nil) }
 func (c *client) post(path string, body any) *response  { return c.do("POST", path, body) }
 func (c *client) put(path string, body any) *response   { return c.do("PUT", path, body) }
 func (c *client) patch(path string, body any) *response { return c.do("PATCH", path, body) }
@@ -415,4 +416,16 @@ func (e *env) secretKey(c *client, pid uint32, scopes ...string) (*client, int64
 	kc := e.anon()
 	kc.bearer = k.Secret
 	return kc, k.ID
+}
+
+// bootstrapOrg creates a user owning a new organisation with one project,
+// the way `la-control bootstrap` does.
+func bootstrapOrg(t *testing.T, e *env, email, org, project string) app.BootstrapResult {
+	t.Helper()
+	res, err := app.Bootstrap(context.Background(), e.db, auth.NewHasher(auth.Params{MemoryKiB: 64, Time: 1, Threads: 1}, 1),
+		app.BootstrapInput{Email: email, Password: testPassword, Org: org, Project: project}, e.clock.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
 }

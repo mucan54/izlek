@@ -116,9 +116,9 @@ pub fn feed(acc: &mut FunnelAcc, batch: &RecordBatch, steps: usize, breakdown: b
             }
         }
     }
-    for i in 0..n {
+    for (i, mask) in masks.iter().enumerate() {
         let value = bd.and_then(|b| (!b.is_null(i)).then(|| b.value(i)));
-        acc.push(persons.value(i), ts.value(i), masks[i], value)?;
+        acc.push(persons.value(i), ts.value(i), *mask, value)?;
     }
     Ok(())
 }
@@ -162,12 +162,14 @@ pub fn render(req: &FunnelRequest, mut result: FunnelResult) -> Value {
     let mut out = json!({ "steps": steps_json(req, &result.total) });
     if req.breakdown.is_some() {
         // Largest first; ties by value so the order is stable. The null bucket sorts last among ties.
-        result.groups.sort_by(|a, b| b.1[0].count.cmp(&a.1[0].count).then_with(|| match (&a.0, &b.0) {
-            (Some(x), Some(y)) => x.cmp(y),
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, None) => std::cmp::Ordering::Equal,
-        }));
+        result.groups.sort_by(|a, b| {
+            b.1[0].count.cmp(&a.1[0].count).then_with(|| match (&a.0, &b.0) {
+                (Some(x), Some(y)) => x.cmp(y),
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, None) => std::cmp::Ordering::Equal,
+            })
+        });
         result.groups.truncate(req.breakdown_limit);
         let groups: Vec<Value> = result
             .groups

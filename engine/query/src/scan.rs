@@ -34,11 +34,11 @@ use datafusion::datasource::TableType;
 use datafusion::execution::object_store::ObjectStoreUrl;
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
 use datafusion::logical_expr::simplify::SimplifyContext;
-use datafusion::optimizer::simplify_expressions::ExprSimplifier;
 use datafusion::logical_expr::{
     lit, ColumnarValue, Expr, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, TableProviderFilterPushDown,
     Volatility,
 };
+use datafusion::optimizer::simplify_expressions::ExprSimplifier;
 use datafusion::physical_expr::expressions::Column as PhysColumn;
 use datafusion::physical_expr::{EquivalenceProperties, LexOrdering, PhysicalExpr, PhysicalSortExpr};
 use datafusion::physical_plan::empty::EmptyExec;
@@ -260,8 +260,11 @@ fn dedup_batch(batch: RecordBatch, key: [usize; 3], last: &mut LastKey) -> Resul
     let person = batch.column(key[0]).as_string::<i32>();
     let ts = batch.column(key[1]).as_primitive::<arrow::datatypes::TimestampMillisecondType>();
     let uuid = batch.column(key[2]).as_fixed_size_binary();
-    let same = |i: usize, j: usize| ts.value(i) == ts.value(j) && uuid.value(i) == uuid.value(j) && person.value(i) == person.value(j);
-    let first_dup = last.set && ts.value(0) == last.ts && uuid.value(0) == last.uuid.as_slice() && person.value(0) == last.person;
+    let same = |i: usize, j: usize| {
+        ts.value(i) == ts.value(j) && uuid.value(i) == uuid.value(j) && person.value(i) == person.value(j)
+    };
+    let first_dup =
+        last.set && ts.value(0) == last.ts && uuid.value(0) == last.uuid.as_slice() && person.value(0) == last.person;
     let mut dups = usize::from(first_dup);
     let mut keep = BooleanBuilder::with_capacity(n);
     keep.append_value(!first_dup);
@@ -309,7 +312,9 @@ impl ExecutionPlan for DedupExec {
         let input = self.input.execute(partition, context)?;
         let key = self.key;
         let mut last = LastKey::default();
-        let stream = input.map(move |b| dedup_batch(b?, key, &mut last)).try_filter(|b| futures::future::ready(b.num_rows() > 0));
+        let stream = input
+            .map(move |b| dedup_batch(b?, key, &mut last))
+            .try_filter(|b| futures::future::ready(b.num_rows() > 0));
         Ok(Box::pin(RecordBatchStreamAdapter::new(self.schema(), stream)))
     }
 }
@@ -433,8 +438,11 @@ impl ExecutionPlan for EventsScanExec {
         Ok(self)
     }
     fn execute(&self, partition: usize, context: Arc<TaskContext>) -> Result<SendableRecordBatchStream> {
-        let units: Vec<Arc<dyn ExecutionPlan>> =
-            self.groups.get(partition).map(|g| g.iter().map(|i| Arc::clone(&self.units[*i])).collect()).unwrap_or_default();
+        let units: Vec<Arc<dyn ExecutionPlan>> = self
+            .groups
+            .get(partition)
+            .map(|g| g.iter().map(|i| Arc::clone(&self.units[*i])).collect())
+            .unwrap_or_default();
         // Units are opened lazily, one after another.
         let stream = futures::stream::iter(units).map(move |u| u.execute(0, Arc::clone(&context))).try_flatten();
         Ok(Box::pin(RecordBatchStreamAdapter::new(self.schema(), stream)))
@@ -472,8 +480,13 @@ fn tombstone_filters(snap: &Snapshot, after_ts: i64) -> Vec<Expr> {
         return vec![];
     }
     let mut out = Vec::new();
-    let users: Vec<String> =
-        set.person_keys.iter().filter_map(|k| k.strip_prefix("u:")).filter(|u| !u.is_empty()).map(str::to_owned).collect();
+    let users: Vec<String> = set
+        .person_keys
+        .iter()
+        .filter_map(|k| k.strip_prefix("u:"))
+        .filter(|u| !u.is_empty())
+        .map(str::to_owned)
+        .collect();
     if !set.person_keys.is_empty() {
         out.push(ident("person_key").in_list(string_list(set.person_keys.iter().cloned()), true));
     }
@@ -492,6 +505,103 @@ fn sort_exprs(schema: &Schema, names: &[&str]) -> Result<LexOrdering> {
         .map(|n| Ok(PhysicalSortExpr::new_default(Arc::new(PhysColumn::new(n, schema.index_of(n)?)) as _)))
         .collect::<Result<Vec<_>>>()?;
     LexOrdering::new(exprs).ok_or_else(|| datafusion::error::DataFusionError::Internal("empty ordering".into()))
+}
+
+/// What the `person_key` conjuncts say about the keys a row may have.
+#[derive(Debug, Default, PartialEq)]
+struct PersonBounds {
+    /// Inclusive lower bound.
+    lo: Option<String>,
+    /// Upper bound and whether it is inclusive.
+    hi: Option<(String, bool)>,
+    /// Explicit candidate keys (`=` / `IN`), when any conjunct lists them.
+    keys: Option<Vec<String>>,
+}
+
+fn utf8_literal(e: &Expr) -> Option<&str> {
+    match e {
+        Expr::Literal(
+            ScalarValue::Utf8(Some(s)) | ScalarValue::LargeUtf8(Some(s)) | ScalarValue::Utf8View(Some(s)),
+            _,
+        ) => Some(s),
+        _ => None,
+    }
+}
+
+fn is_person_key(e: &Expr) -> bool {
+    matches!(e, Expr::Column(c) if c.name == "person_key")
+}
+
+impl PersonBounds {
+    /// Reads the bounds off top-level conjuncts of the shapes
+    /// `person_key <op> 'lit'` and `person_key IN ('a', …)`; anything else
+    /// (negations, disjunctions, functions) contributes nothing.
+    fn from_filters(filters: &[Expr]) -> Self {
+        use datafusion::logical_expr::{BinaryExpr, Operator};
+        let mut b = PersonBounds::default();
+        let tighten_lo = |b: &mut PersonBounds, v: &str| {
+            if b.lo.as_deref().is_none_or(|cur| v > cur) {
+                b.lo = Some(v.to_owned());
+            }
+        };
+        let tighten_hi = |b: &mut PersonBounds, v: &str, inclusive: bool| {
+            let tighter = match &b.hi {
+                None => true,
+                Some((cur, cur_inc)) => v < cur.as_str() || (v == cur && *cur_inc && !inclusive),
+            };
+            if tighter {
+                b.hi = Some((v.to_owned(), inclusive));
+            }
+        };
+        let restrict = |b: &mut PersonBounds, keys: Vec<String>| {
+            b.keys = Some(match b.keys.take() {
+                None => keys,
+                Some(cur) => cur.into_iter().filter(|k| keys.contains(k)).collect(),
+            });
+        };
+        let mut stack: Vec<&Expr> = filters.iter().collect();
+        while let Some(e) = stack.pop() {
+            match e {
+                Expr::BinaryExpr(BinaryExpr { left, op: Operator::And, right }) => {
+                    stack.push(left);
+                    stack.push(right);
+                }
+                Expr::BinaryExpr(BinaryExpr { left, op, right }) if is_person_key(left) => {
+                    let Some(v) = utf8_literal(right) else { continue };
+                    match op {
+                        Operator::Eq => restrict(&mut b, vec![v.to_owned()]),
+                        Operator::GtEq | Operator::Gt => tighten_lo(&mut b, v),
+                        Operator::Lt => tighten_hi(&mut b, v, false),
+                        Operator::LtEq => tighten_hi(&mut b, v, true),
+                        _ => {}
+                    }
+                }
+                Expr::InList(list) if !list.negated && is_person_key(&list.expr) => {
+                    let keys: Option<Vec<String>> =
+                        list.list.iter().map(|x| utf8_literal(x).map(str::to_owned)).collect();
+                    if let Some(keys) = keys {
+                        restrict(&mut b, keys);
+                    }
+                }
+                _ => {}
+            }
+        }
+        b
+    }
+
+    /// Whether a file whose stored keys span `[min, max]` can hold a row
+    /// satisfying the bounds.
+    fn may_contain(&self, min: &str, max: &str) -> bool {
+        if self.lo.as_deref().is_some_and(|lo| max < lo) {
+            return false;
+        }
+        if let Some((hi, inclusive)) = &self.hi {
+            if min > hi.as_str() || (min == hi && !inclusive) {
+                return false;
+            }
+        }
+        self.keys.as_ref().is_none_or(|keys| keys.iter().any(|k| min <= k.as_str() && k.as_str() <= max))
+    }
 }
 
 const H_PERSON: &str = "__la_person_key";
@@ -513,6 +623,9 @@ pub fn to_physical(state: &dyn Session, e: &Expr, schema: &SchemaRef) -> Result<
     state.create_physical_expr(e, &df)
 }
 
+/// `(single-partition plan, files read, rows in the day's files)`.
+type DayPlan = (Arc<dyn ExecutionPlan>, usize, u64);
+
 struct Planner<'a> {
     cx: &'a ScanContext,
     state: &'a dyn Session,
@@ -521,6 +634,8 @@ struct Planner<'a> {
     filters_other: Vec<Expr>,
     /// Filters that depend on `person_key` (must see the rewritten key).
     filters_person: Vec<Expr>,
+    /// Key range implied by `filters_person`, for file-level pruning.
+    bounds: PersonBounds,
     ordered: bool,
 }
 
@@ -579,7 +694,8 @@ impl Planner<'_> {
             indices.push(self.table.index_of("flags")?);
         }
 
-        let factory = Arc::new(CachedReaderFactory { cache: Arc::clone(&self.cx.files), stats: Arc::clone(&self.cx.stats) });
+        let factory =
+            Arc::new(CachedReaderFactory { cache: Arc::clone(&self.cx.files), stats: Arc::clone(&self.cx.stats) });
         let source = ParquetSource::new(Arc::clone(&self.table))
             .with_parquet_file_reader_factory(factory)
             .with_enable_page_index(true)
@@ -626,8 +742,10 @@ impl Planner<'_> {
             }
         }
         let schema = plan.schema();
-        let exprs =
-            layout.iter().map(|(e, name)| Ok((self.physical(e, &schema)?, name.clone()))).collect::<Result<Vec<_>>>()?;
+        let exprs = layout
+            .iter()
+            .map(|(e, name)| Ok((self.physical(e, &schema)?, name.clone())))
+            .collect::<Result<Vec<_>>>()?;
         plan = Arc::new(ProjectionExec::try_new(exprs, plan)?);
         if matches!(variant, Variant::Linked(_)) {
             let ordering = sort_exprs(&plan.schema(), &[H_PERSON, H_TS, H_UUID])?;
@@ -638,12 +756,7 @@ impl Planner<'_> {
 
     /// Plan for one day: `(single-partition plan, files read)`, or `None`
     /// when every file is pruned.
-    fn day(
-        &self,
-        manifest: &DayManifest,
-        out: &[(Expr, String)],
-        out_schema: &SchemaRef,
-    ) -> Result<Option<(Arc<dyn ExecutionPlan>, usize, u64)>> {
+    fn day(&self, manifest: &DayManifest, out: &[(Expr, String)], out_schema: &SchemaRef) -> Result<Option<DayPlan>> {
         let snap = &self.cx.snap;
         let files: Vec<&FileEntry> =
             manifest.files.iter().filter(|f| f.rows > 0 && f.max_ts >= snap.from_ms && f.min_ts < snap.to_ms).collect();
@@ -653,19 +766,31 @@ impl Planner<'_> {
         let day = DayFilters { tombstones: tombstone_filters(snap, manifest.tombstone_ts) };
         let mut streams: Vec<(&FileEntry, Variant)> = Vec::new();
         for f in &files {
+            // Rows that keep their stored key can only match if the file's key
+            // range (manifest) intersects what the filters allow.
+            let in_range = self.bounds.may_contain(&f.min_person, &f.max_person);
             // "a:" keys sort before everything else, so a file whose smallest
             // key is already past them has nothing to rewrite.
             let has_unresolved = f.min_person.as_str() < "a;";
             if f.identity_version < snap.max_link_version && has_unresolved {
-                streams.push((f, Variant::Unlinked(f.identity_version)));
+                if in_range {
+                    streams.push((f, Variant::Unlinked(f.identity_version)));
+                }
+                // Rewritten rows get a new key: the stored range says nothing.
                 streams.push((f, Variant::Linked(f.identity_version)));
-            } else {
+            } else if in_range {
                 streams.push((f, Variant::Plain));
             }
         }
+        if streams.is_empty() {
+            return Ok(None);
+        }
+        let mut read: Vec<&str> = streams.iter().map(|(f, _)| f.key.as_str()).collect();
+        read.dedup();
+        let n_files = read.len();
         let rows: u64 = files.iter().map(|f| f.rows).sum();
-        if streams.len() == 1 {
-            let plan = self.file_stream(streams[0].0, &day, out, Variant::Plain, self.ordered)?;
+        if let [(file, Variant::Plain)] = streams.as_slice() {
+            let plan = self.file_stream(file, &day, out, Variant::Plain, self.ordered)?;
             return Ok(Some((plan, 1, rows)));
         }
         // Several streams: merge on the key and collapse duplicates.
@@ -688,10 +813,8 @@ impl Planner<'_> {
                 }
             }
         }
-        let inputs = streams
-            .iter()
-            .map(|(f, v)| self.file_stream(f, &day, &layout, *v, true))
-            .collect::<Result<Vec<_>>>()?;
+        let inputs =
+            streams.iter().map(|(f, v)| self.file_stream(f, &day, &layout, *v, true)).collect::<Result<Vec<_>>>()?;
         let union = UnionExec::try_new(inputs)?;
         let ordering = sort_exprs(&union.schema(), &[H_PERSON, H_TS, H_UUID])?;
         let merged: Arc<dyn ExecutionPlan> = Arc::new(SortPreservingMergeExec::new(ordering, union));
@@ -700,10 +823,12 @@ impl Planner<'_> {
         let exprs: Vec<(Arc<dyn PhysicalExpr>, String)> = mapping
             .iter()
             .zip(out_schema.fields())
-            .map(|(i, f)| (Arc::new(PhysColumn::new(schema.field(*i).name(), *i)) as Arc<dyn PhysicalExpr>, f.name().clone()))
+            .map(|(i, f)| {
+                (Arc::new(PhysColumn::new(schema.field(*i).name(), *i)) as Arc<dyn PhysicalExpr>, f.name().clone())
+            })
             .collect();
         let plan: Arc<dyn ExecutionPlan> = Arc::new(ProjectionExec::try_new(exprs, deduped)?);
-        Ok(Some((plan, files.len(), rows)))
+        Ok(Some((plan, n_files, rows)))
     }
 }
 
@@ -712,7 +837,9 @@ pub fn plan_scan(cx: &ScanContext, state: &dyn Session, req: &ScanRequest) -> Re
     let table = table_schema(&cx.snap);
     let (filters_person, filters_other): (Vec<Expr>, Vec<Expr>) =
         req.filters.iter().cloned().partition(|e| columns_of(e).contains("person_key"));
-    let planner = Planner { cx, state, table: Arc::clone(&table), filters_other, filters_person, ordered: req.ordered };
+    let bounds = PersonBounds::from_filters(&filters_person);
+    let planner =
+        Planner { cx, state, table: Arc::clone(&table), filters_other, filters_person, bounds, ordered: req.ordered };
 
     // Output schema, derived from the expressions.
     let mut fields = Vec::with_capacity(req.exprs.len());
@@ -837,7 +964,19 @@ impl EventsTable {
 }
 
 fn pushable(e: &Expr) -> bool {
-    !e.is_volatile() && !e.exists(|x| Ok(matches!(x, Expr::ScalarSubquery(_) | Expr::Exists(_) | Expr::InSubquery(_) | Expr::OuterReferenceColumn(..) | Expr::Placeholder(_)))).unwrap_or(true)
+    !e.is_volatile()
+        && !e
+            .exists(|x| {
+                Ok(matches!(
+                    x,
+                    Expr::ScalarSubquery(_)
+                        | Expr::Exists(_)
+                        | Expr::InSubquery(_)
+                        | Expr::OuterReferenceColumn(..)
+                        | Expr::Placeholder(_)
+                ))
+            })
+            .unwrap_or(true)
 }
 
 #[async_trait]
@@ -853,7 +992,13 @@ impl TableProvider for EventsTable {
     fn supports_filters_pushdown(&self, filters: &[&Expr]) -> Result<Vec<TableProviderFilterPushDown>> {
         Ok(filters
             .iter()
-            .map(|f| if pushable(f) { TableProviderFilterPushDown::Exact } else { TableProviderFilterPushDown::Unsupported })
+            .map(|f| {
+                if pushable(f) {
+                    TableProviderFilterPushDown::Exact
+                } else {
+                    TableProviderFilterPushDown::Unsupported
+                }
+            })
             .collect())
     }
 
@@ -868,8 +1013,10 @@ impl TableProvider for EventsTable {
             Some(p) => p.clone(),
             None => (0..self.schema.fields().len()).collect(),
         };
-        let exprs =
-            indices.iter().map(|i| (ident(self.schema.field(*i).name().as_str()), self.schema.field(*i).name().clone())).collect();
+        let exprs = indices
+            .iter()
+            .map(|i| (ident(self.schema.field(*i).name().as_str()), self.schema.field(*i).name().clone()))
+            .collect();
         let filters = filters.iter().cloned().map(unqualify).collect::<Result<Vec<_>>>()?;
         let req = ScanRequest { exprs, filters, ordered: self.ordered.load(Ordering::Relaxed) };
         let plan = plan_scan(&self.cx, state, &req)?;
@@ -924,7 +1071,8 @@ impl TableProvider for PersonsTable {
             pk.append_value(k);
             props.append_value(self.table.person_json(k));
         }
-        let batch = RecordBatch::try_new(Arc::clone(&self.schema), vec![Arc::new(pk.finish()), Arc::new(props.finish())])?;
+        let batch =
+            RecordBatch::try_new(Arc::clone(&self.schema), vec![Arc::new(pk.finish()), Arc::new(props.finish())])?;
         let exec = datafusion::datasource::memory::MemorySourceConfig::try_new_exec(
             &[vec![batch]],
             Arc::clone(&self.schema),
@@ -937,4 +1085,31 @@ impl TableProvider for PersonsTable {
 /// Day (UTC) of a timestamp, for callers that iterate days themselves.
 pub fn day_bounds(day: &str) -> Option<(i64, i64)> {
     time::day_start_ms(day).map(|s| (s, s + time::DAY_MS))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn person_bounds_from_conjuncts() {
+        let pk = || ident("person_key");
+        let b =
+            PersonBounds::from_filters(&[pk().gt_eq(lit("u:b")), pk().lt(lit("u:m")).and(ident("event").eq(lit("x")))]);
+        assert_eq!(b, PersonBounds { lo: Some("u:b".into()), hi: Some(("u:m".into(), false)), keys: None });
+        assert!(b.may_contain("a:x", "u:c") && b.may_contain("u:l", "u:z"));
+        assert!(!b.may_contain("a:x", "u:a") && !b.may_contain("u:m", "u:z"));
+        let b = PersonBounds::from_filters(&[pk().in_list(vec![lit("u:a"), lit("u:k")], false), pk().eq(lit("u:k"))]);
+        assert_eq!(b.keys, Some(vec!["u:k".to_owned()]));
+        assert!(b.may_contain("u:a", "u:k") && !b.may_contain("u:a", "u:j"));
+        // Shapes that prove nothing leave the bounds open.
+        let open = PersonBounds::from_filters(&[
+            datafusion::logical_expr::not(pk().eq(lit("u:a"))),
+            pk().eq(lit("u:a")).or(pk().eq(lit("u:b"))),
+            pk().in_list(vec![lit("u:a")], true),
+            ident("anon_id").eq(lit("x")),
+        ]);
+        assert_eq!(open, PersonBounds::default());
+        assert!(open.may_contain("a", "z"));
+    }
 }

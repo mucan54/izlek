@@ -108,7 +108,9 @@ impl TrendsRequest {
         }
         let limit = o.u64("breakdown_limit")?.map(|n| n as usize).unwrap_or(DEFAULT_BREAKDOWN_LIMIT);
         if limit == 0 || limit > MAX_BREAKDOWN_LIMIT {
-            return Err(ApiError::bad_request(format!("`breakdown_limit` must be between 1 and {MAX_BREAKDOWN_LIMIT}")));
+            return Err(ApiError::bad_request(format!(
+                "`breakdown_limit` must be between 1 and {MAX_BREAKDOWN_LIMIT}"
+            )));
         }
         let req = Self {
             from_ms,

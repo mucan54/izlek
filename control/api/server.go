@@ -336,6 +336,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// No response may be written forever: a client that stops reading is
+	// cut off. The query proxy extends this for long-running queries.
+	_ = http.NewResponseController(sw).SetWriteDeadline(time.Now().Add(apiWriteTimeout))
+
 	path := r.URL.Path
 	switch {
 	case path == "/healthz":
@@ -428,13 +432,11 @@ type requestInfo struct {
 	quiet   bool
 }
 
-// apiWriteTimeout bounds how long an ordinary API response may take to
-// write; the query proxy sets its own, longer deadline.
+// apiWriteTimeout bounds how long an ordinary response may take to write;
+// the query proxy sets its own, longer deadline.
 const apiWriteTimeout = 60 * time.Second
 
 func (s *Server) serveAPI(w *statusWriter, r *http.Request, info *requestInfo) {
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(apiWriteTimeout))
-
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	method := r.Method
 	if method == http.MethodHead {

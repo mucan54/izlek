@@ -12,8 +12,8 @@ use datafusion::logical_expr::simplify::{ExprSimplifyResult, SimplifyContext};
 use datafusion::logical_expr::{
     cast, ColumnarValue, Expr, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, TypeSignature, Volatility,
 };
-use la_core::schema::{PromotedColumn, PropType};
 use la_core::persons::PersonTable;
+use la_core::schema::{PromotedColumn, PropType};
 use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -148,7 +148,8 @@ impl ScalarUDFImpl for JsonProp {
         if self.promoted.is_empty() {
             return Ok(ExprSimplifyResult::Original(args));
         }
-        let (Some(Expr::Column(props)), Some(Expr::Literal(ScalarValue::Utf8(Some(key)), _))) = (args.first(), args.get(1))
+        let (Some(Expr::Column(props)), Some(Expr::Literal(ScalarValue::Utf8(Some(key)), _))) =
+            (args.first(), args.get(1))
         else {
             return Ok(ExprSimplifyResult::Original(args));
         };
@@ -552,11 +553,18 @@ mod tests {
             [Some(3.0), Some(7.5), None, None, None, None]
         );
         let j = call(&prop_jnum(), vec![d(), lit("n")], 6);
-        assert_eq!(j.as_primitive::<arrow::datatypes::Float64Type>().iter().collect::<Vec<_>>()[..2], [Some(3.0), None]);
+        assert_eq!(
+            j.as_primitive::<arrow::datatypes::Float64Type>().iter().collect::<Vec<_>>()[..2],
+            [Some(3.0), None]
+        );
         let b = call(&prop_bool(), vec![d(), lit("b")], 6);
-        assert_eq!(b.as_any().downcast_ref::<BooleanArray>().unwrap().iter().collect::<Vec<_>>()[..2], [Some(true), None]);
+        assert_eq!(
+            b.as_any().downcast_ref::<BooleanArray>().unwrap().iter().collect::<Vec<_>>()[..2],
+            [Some(true), None]
+        );
         // Per-row keys.
-        let keys: ArrayRef = Arc::new(StringArray::from(vec![Some("n"), Some("a"), None, Some("a"), Some("a"), Some("a")]));
+        let keys: ArrayRef =
+            Arc::new(StringArray::from(vec![Some("n"), Some("a"), None, Some("a"), Some("a"), Some("a")]));
         let s = call(&prop(), vec![d(), ColumnarValue::Array(keys)], 6);
         assert_eq!(s.as_string::<i32>().iter().collect::<Vec<_>>(), [Some("3"), Some("12"), None, None, None, None]);
     }
@@ -597,11 +605,9 @@ mod tests {
                 .with_timezone("UTC"),
         );
         let out = call(&udf, vec![ColumnarValue::Array(ts)], 4);
-        assert_eq!(out.as_any().downcast_ref::<Int32Array>().unwrap().iter().collect::<Vec<_>>(), [
-            Some(0),
-            None,
-            None,
-            Some(2)
-        ]);
+        assert_eq!(
+            out.as_any().downcast_ref::<Int32Array>().unwrap().iter().collect::<Vec<_>>(),
+            [Some(0), None, None, Some(2)]
+        );
     }
 }

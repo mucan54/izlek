@@ -94,7 +94,9 @@ func TestLoginLogout(t *testing.T) {
 	e := newEnv(t)
 	e.setup()
 	c := e.anon()
-	creds := func(email, password string) map[string]any { return map[string]any{"email": email, "password": password} }
+	creds := func(email, password string) map[string]any {
+		return map[string]any{"email": email, "password": password}
+	}
 
 	c.post("/api/auth/login", creds("owner@example.com", "wrong password!")).wantError(401, "invalid_credentials")
 	c.post("/api/auth/login", creds("nobody@example.com", testPassword)).wantError(401, "invalid_credentials")
@@ -308,7 +310,7 @@ func TestPasswordChangeInvalidatesOtherSessions(t *testing.T) {
 	elsewhere.get("/api/me").want(200) // nothing changed yet
 
 	here.post("/api/me/password", map[string]any{"current": testPassword, "new": next}).want(200)
-	here.get("/api/me").want(200)                          // this session survives
+	here.get("/api/me").want(200)                           // this session survives
 	elsewhere.get("/api/me").wantError(401, "unauthorized") // the other one is gone
 
 	e.anon().post("/api/auth/login", map[string]any{"email": "owner@example.com", "password": testPassword}).wantError(401, "invalid_credentials")
@@ -320,8 +322,9 @@ func TestPasswordChangeInvalidatesOtherSessions(t *testing.T) {
 		t.Fatalf("stored hash %q, %v", u.PasswordHash, err)
 	}
 
-	// Guessing the current password through a stolen session is throttled.
-	for i := 0; i < 5; i++ {
+	// Guessing the current password through a stolen session is throttled
+	// (five failures a minute; one happened above).
+	for i := 0; i < 4; i++ {
 		here.post("/api/me/password", map[string]any{"current": "guess number " + strconv.Itoa(i), "new": "does not matter!"}).wantError(403, "invalid_credentials")
 	}
 	here.post("/api/me/password", map[string]any{"current": next, "new": "does not matter!"}).wantError(429, "rate_limited")

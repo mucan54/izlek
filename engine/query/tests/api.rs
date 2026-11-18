@@ -25,7 +25,10 @@ async fn seed(store: &Store) {
         FileSpec::l0(A, DAY1, "a").level(2),
         vec![
             ev("devA", Some("alice"), d1 + H, "signup").platform("ios").country("TR").uuid(101).session(9),
-            ev("devA", Some("alice"), d1 + 2 * H, "purchase").platform("ios").props(r#"{"amount":10,"sku":"x1"}"#).uuid(102),
+            ev("devA", Some("alice"), d1 + 2 * H, "purchase")
+                .platform("ios")
+                .props(r#"{"amount":10,"sku":"x1"}"#)
+                .uuid(102),
             ev("devB", Some("bob"), d1 + 3 * H, "signup").platform("web").uuid(103),
         ],
     )
@@ -34,7 +37,10 @@ async fn seed(store: &Store) {
         store,
         FileSpec::l0(A, DAY2, "a").schema(2, &promoted),
         vec![
-            ev("devA", Some("alice"), d2 + H, "purchase").platform("web").promoted(vec![Some(Cell::Float(5.5))]).uuid(201),
+            ev("devA", Some("alice"), d2 + H, "purchase")
+                .platform("web")
+                .promoted(vec![Some(Cell::Float(5.5))])
+                .uuid(201),
             ev("devB", Some("bob"), d2 + 2 * H, "view").platform("web").uuid(202),
             ev("devC", None, d2 + 3 * H, "signup").platform("web").uuid(203),
         ],
@@ -79,7 +85,8 @@ async fn authentication_and_error_envelope() {
     assert!(r.json()["error"]["message"].is_string());
     assert_eq!(app.post("sk_wrong", "/q/trends", body.clone()).await.status, StatusCode::UNAUTHORIZED);
     assert_eq!(app.post("pk_live_abc", "/q/trends", body.clone()).await.status, StatusCode::UNAUTHORIZED);
-    let basic = Request::post("/q/trends").header("authorization", "Basic abc").body(Body::from(body.to_string())).unwrap();
+    let basic =
+        Request::post("/q/trends").header("authorization", "Basic abc").body(Body::from(body.to_string())).unwrap();
     assert_eq!(app.send(basic).await.status, StatusCode::UNAUTHORIZED);
     // The stored hash is not a credential.
     let hash = la_core::control::sha256_hex(KEY);
@@ -91,7 +98,8 @@ async fn authentication_and_error_envelope() {
     assert_meta(&app.ok(KEY, "/q/trends", body.clone()).await);
 
     // 400s: broken JSON, non-object, unknown field, bad range, >400 days.
-    let raw = Request::post("/q/trends").header("authorization", format!("Bearer {KEY}")).body(Body::from("{nope")).unwrap();
+    let raw =
+        Request::post("/q/trends").header("authorization", format!("Bearer {KEY}")).body(Body::from("{nope")).unwrap();
     let r = app.send(raw).await;
     assert_eq!((r.status, r.code().as_str()), (StatusCode::BAD_REQUEST, "bad_request"));
     for bad in [
@@ -123,7 +131,11 @@ async fn internal_header_path() {
     seed(&store).await;
     let body = with(range(), json!({"series": [{"event": null, "agg": "count"}]}));
     let internal = |secret: &str, project: &str| {
-        Request::post("/q/trends").header("x-la-internal", secret).header("x-la-project", project).body(Body::from(body.to_string())).unwrap()
+        Request::post("/q/trends")
+            .header("x-la-internal", secret)
+            .header("x-la-project", project)
+            .body(Body::from(body.to_string()))
+            .unwrap()
     };
     // Secret not configured: the path is closed, whatever is presented.
     let closed = app(&store).await;
@@ -215,7 +227,14 @@ async fn trends() {
     );
     // Null breakdown bucket, person property breakdown, week/month/hour buckets.
     let v = app
-        .ok(KEY, "/q/trends", with(range(), json!({"series": [{"event": null, "agg": "unique"}], "breakdown": "person.plan", "interval": "week"})))
+        .ok(
+            KEY,
+            "/q/trends",
+            with(
+                range(),
+                json!({"series": [{"event": null, "agg": "unique"}], "breakdown": "person.plan", "interval": "week"}),
+            ),
+        )
         .await;
     assert_eq!(v["buckets"], json!(["2026-10-26T00:00:00Z", "2026-11-02T00:00:00Z"]));
     let by: std::collections::BTreeMap<String, Value> =
@@ -278,7 +297,11 @@ async fn funnel() {
     }
     // Global filter on a person property.
     let v = app
-        .ok(KEY, "/q/funnel", with(base.clone(), json!({"filter": {"prop": "person.plan", "op": "eq", "value": "free"}})))
+        .ok(
+            KEY,
+            "/q/funnel",
+            with(base.clone(), json!({"filter": {"prop": "person.plan", "op": "eq", "value": "free"}})),
+        )
         .await;
     assert_eq!(v["steps"][0]["count"], 1);
     for bad in [
@@ -298,7 +321,14 @@ async fn retention() {
     seed(&store).await;
     let app = app(&store).await;
     let v = app
-        .ok(KEY, "/q/retention", with(range(), json!({"period": "day", "periods": 8, "start": {"event": "signup"}, "return": {"event": null}})))
+        .ok(
+            KEY,
+            "/q/retention",
+            with(
+                range(),
+                json!({"period": "day", "periods": 8, "start": {"event": "signup"}, "return": {"event": null}}),
+            ),
+        )
         .await;
     assert_eq!(
         v["cohorts"],
@@ -309,7 +339,14 @@ async fn retention() {
     );
     assert_meta(&v);
     let v = app
-        .ok(KEY, "/q/retention", with(range(), json!({"period": "day", "periods": 1, "start": {"event": "signup"}, "return": {"event": "purchase"}})))
+        .ok(
+            KEY,
+            "/q/retention",
+            with(
+                range(),
+                json!({"period": "day", "periods": 1, "start": {"event": "signup"}, "return": {"event": "purchase"}}),
+            ),
+        )
         .await;
     assert_eq!(v["cohorts"][0]["returned"], json!([1]));
     for bad in [
@@ -367,12 +404,17 @@ async fn events_shape_and_pagination() {
             assert_eq!(seen, reference, "{order}/{limit}");
         }
     }
-    let ts_order: Vec<String> = [101u64, 102, 103, 201, 202, 203].iter().map(|n| la_codec::ids::hex32(&uuid(*n))).collect();
+    let ts_order: Vec<String> =
+        [101u64, 102, 103, 201, 202, 203].iter().map(|n| la_codec::ids::hex32(&uuid(*n))).collect();
     assert_eq!(reference, ts_order);
 
     // Full shape of one event; props is the logical view (promoted folded in).
     let v = app
-        .ok(KEY, "/q/events", with(range(), json!({"order": "asc", "filter": {"prop": "event", "op": "eq", "value": "purchase"}})))
+        .ok(
+            KEY,
+            "/q/events",
+            with(range(), json!({"order": "asc", "filter": {"prop": "event", "op": "eq", "value": "purchase"}})),
+        )
         .await;
     let e = &v["events"];
     assert_eq!(e.as_array().unwrap().len(), 2);
@@ -391,7 +433,9 @@ async fn events_shape_and_pagination() {
     assert_eq!(e[1]["props"], json!({"amount": 5.5}));
     // Session filter (hex32) and its shape.
     let sid = la_codec::ids::hex32(&uuid(9));
-    let v = app.ok(KEY, "/q/events", with(range(), json!({"filter": {"prop": "session_id", "op": "eq", "value": sid}}))).await;
+    let v = app
+        .ok(KEY, "/q/events", with(range(), json!({"filter": {"prop": "session_id", "op": "eq", "value": sid}})))
+        .await;
     assert_eq!(v["events"].as_array().unwrap().len(), 1);
     assert_eq!(v["events"][0]["session_id"], json!(sid));
     assert_eq!(v["events"][0]["country"], "TR");
@@ -423,7 +467,9 @@ async fn sql() {
     seed(&store).await;
     let app = app(&store).await;
     let q = |sql: &str| with(range(), json!({"sql": sql}));
-    let v = app.ok(KEY, "/q/sql", q("SELECT event, count(*) AS n FROM events GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 10")).await;
+    let v = app
+        .ok(KEY, "/q/sql", q("SELECT event, count(*) AS n FROM events GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 10"))
+        .await;
     assert_eq!(v["columns"], json!([{"name": "event", "type": "Utf8"}, {"name": "n", "type": "Int64"}]));
     assert_eq!(v["rows"], json!([["signup", 3], ["purchase", 2], ["view", 1]]));
     assert_meta(&v);
@@ -452,7 +498,8 @@ async fn sql() {
         )
         .await;
     assert_eq!(v["rows"], json!([[15.5, 2, null]]));
-    let v = app.ok(KEY, "/q/sql", q("SELECT prop(props, 'amount') FROM events WHERE event = 'purchase' ORDER BY ts")).await;
+    let v =
+        app.ok(KEY, "/q/sql", q("SELECT prop(props, 'amount') FROM events WHERE event = 'purchase' ORDER BY ts")).await;
     assert_eq!(v["rows"], json!([["10"], ["5.5"]]));
     // Persons table, joins, CTEs, subqueries, window functions over the declared order.
     let v = app
@@ -564,9 +611,15 @@ async fn schema_replay_health_metrics() {
     assert_eq!(r.bytes, b"\x28\xb5\x2f\xfdchunk");
     let r = app.get(KEY, &format!("/q/replay?key=replay/p={A}/d={DAY1}/{s}/000001.bin.gz")).await;
     assert_eq!((r.status, r.headers["content-encoding"].to_str().unwrap()), (StatusCode::OK, "gzip"));
-    assert_eq!(app.get(KEY, &format!("/q/replay?key=replay/p={A}/d={DAY1}/{s}/000009.bin.zst")).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        app.get(KEY, &format!("/q/replay?key=replay/p={A}/d={DAY1}/{s}/000009.bin.zst")).await.status,
+        StatusCode::NOT_FOUND
+    );
     assert_eq!(app.get(KEY, "/q/replay").await.status, StatusCode::BAD_REQUEST);
-    assert_eq!(app.get(KEY, &format!("/q/replay?key=replay/p=2/d={DAY1}/{s}/000000.bin.zst")).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        app.get(KEY, &format!("/q/replay?key=replay/p=2/d={DAY1}/{s}/000000.bin.zst")).await.status,
+        StatusCode::FORBIDDEN
+    );
     assert_eq!(app.get("sk_wrong", &format!("/q/replay?key={chunk_key}")).await.status, StatusCode::UNAUTHORIZED);
 
     // Unauthenticated operational endpoints.
@@ -614,7 +667,11 @@ async fn readiness_requires_control_files() {
 async fn add_key_raw(store: &Store, sk: &str, project: u32) {
     let hash = la_core::control::sha256_hex(sk);
     store
-        .put(keys::KEYS, format!(r#"{{"version":1,"keys":{{"{hash}":{{"project_id":{project},"scopes":["query"]}}}}}}"#).into_bytes())
+        .put(
+            keys::KEYS,
+            format!(r#"{{"version":1,"keys":{{"{hash}":{{"project_id":{project},"scopes":["query"]}}}}}}"#)
+                .into_bytes(),
+        )
         .await
         .unwrap();
 }
@@ -675,7 +732,11 @@ async fn limits_scan_bytes_timeout_and_queue() {
 
     // 422: per-project scan budget from projects.json.
     store
-        .put(keys::PROJECTS, format!(r#"{{"version":1,"projects":{{"{A}":{{"scan_limit_bytes":16,"max_concurrent_queries":1}}}}}}"#).into_bytes())
+        .put(
+            keys::PROJECTS,
+            format!(r#"{{"version":1,"projects":{{"{A}":{{"scan_limit_bytes":16,"max_concurrent_queries":1}}}}}}"#)
+                .into_bytes(),
+        )
         .await
         .unwrap();
     let tight = app(&store).await;
@@ -686,17 +747,26 @@ async fn limits_scan_bytes_timeout_and_queue() {
     // …and the service-wide default when the project has none.
     store.delete(keys::PROJECTS).await.unwrap();
     let cfg = la_query::config::Config { scan_limit_bytes: 16, ..test_config() };
-    let r = app_with(&store, cfg).await.post(KEY, "/q/funnel", with(range(), json!({"steps": [{"event": "signup"}, {"event": "purchase"}]}))).await;
+    let r = app_with(&store, cfg)
+        .await
+        .post(KEY, "/q/funnel", with(range(), json!({"steps": [{"event": "signup"}, {"event": "purchase"}]})))
+        .await;
     assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
     // Row groups pruned by statistics are never fetched, so they cost nothing.
     let cfg = la_query::config::Config { scan_limit_bytes: 16, ..test_config() };
-    let r = app_with(&store, cfg).await.post(KEY, "/q/funnel", with(range(), json!({"steps": [{"event": "a"}, {"event": "b"}]}))).await;
+    let r = app_with(&store, cfg)
+        .await
+        .post(KEY, "/q/funnel", with(range(), json!({"steps": [{"event": "a"}, {"event": "b"}]})))
+        .await;
     assert_eq!(r.status, StatusCode::OK);
     assert_eq!(r.json()["meta"]["bytes_scanned"], 0);
 
     // 429: one slot, no queue. Hold the slot, the next query is rejected.
     store
-        .put(keys::PROJECTS, format!(r#"{{"version":2,"projects":{{"{A}":{{"max_concurrent_queries":1}}}}}}"#).into_bytes())
+        .put(
+            keys::PROJECTS,
+            format!(r#"{{"version":2,"projects":{{"{A}":{{"max_concurrent_queries":1}}}}}}"#).into_bytes(),
+        )
         .await
         .unwrap();
     let cfg = la_query::config::Config { queue_max: 0, ..test_config() };
@@ -713,7 +783,11 @@ async fn limits_scan_bytes_timeout_and_queue() {
     let permit = slow.svc.limiter.acquire(A, 1).await.unwrap();
     let r = slow.post(KEY, "/q/trends", body.clone()).await;
     assert_eq!((r.status, r.code().as_str()), (StatusCode::REQUEST_TIMEOUT, "timeout"));
-    assert_eq!(slow.svc.limiter.queued.load(std::sync::atomic::Ordering::Relaxed), 0, "timed-out waiter left the queue");
+    assert_eq!(
+        slow.svc.limiter.queued.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "timed-out waiter left the queue"
+    );
     drop(permit);
     assert_eq!(slow.post(KEY, "/q/trends", body.clone()).await.status, StatusCode::OK);
     let text = slow.svc.render_metrics();
@@ -724,22 +798,50 @@ async fn limits_scan_bytes_timeout_and_queue() {
 async fn memory_budget_is_enforced() {
     let store = Store::memory();
     let d = day_ms(DAY1);
-    let events: Vec<Ev> = (0..30_000).map(|i| ev(&format!("dev{i:06}"), None, d + i, "e").props(&format!(r#"{{"k":"value-{i:06}"}}"#))).collect();
+    let events: Vec<Ev> = (0..30_000)
+        .map(|i| ev(&format!("dev{i:06}"), None, d + i, "e").props(&format!(r#"{{"k":"value-{i:06}"}}"#)))
+        .collect();
     add_file(&store, FileSpec::l0(A, DAY1, "big").level(2), events).await;
     add_key(&store, KEY, A, &["query"]).await;
     // 16 MB is the floor Config::from_env enforces; go below it directly.
     let cfg = la_query::config::Config { memory_bytes: 600_000, ..test_config() };
     let app = app_with(&store, cfg).await;
     let r = app
-        .post(KEY, "/q/trends", json!({"from": DAY1, "to": DAY1, "series": [{"agg": "count"}], "breakdown": "props.k", "interval": "hour"}))
+        .post(
+            KEY,
+            "/q/trends",
+            json!({"from": DAY1, "to": DAY1, "series": [{"agg": "count"}], "breakdown": "props.k", "interval": "hour"}),
+        )
         .await;
-    assert_eq!((r.status, r.code().as_str()), (StatusCode::UNPROCESSABLE_ENTITY, "memory_limit"), "{}", String::from_utf8_lossy(&r.bytes));
-    let r = app.post(KEY, "/q/sql", json!({"from": DAY1, "to": DAY1, "sql": "SELECT props, count(*) FROM events GROUP BY 1 ORDER BY 1"})).await;
-    assert_eq!((r.status, r.code().as_str()), (StatusCode::UNPROCESSABLE_ENTITY, "memory_limit"), "{}", String::from_utf8_lossy(&r.bytes));
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (StatusCode::UNPROCESSABLE_ENTITY, "memory_limit"),
+        "{}",
+        String::from_utf8_lossy(&r.bytes)
+    );
+    let r = app
+        .post(
+            KEY,
+            "/q/sql",
+            json!({"from": DAY1, "to": DAY1, "sql": "SELECT props, count(*) FROM events GROUP BY 1 ORDER BY 1"}),
+        )
+        .await;
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (StatusCode::UNPROCESSABLE_ENTITY, "memory_limit"),
+        "{}",
+        String::from_utf8_lossy(&r.bytes)
+    );
     // 408 from a query that is actually running (not merely queued): its tasks are cancelled.
     let cfg = la_query::config::Config { timeout: Duration::from_millis(1), ..test_config() };
     let hasty = app_with(&store, cfg).await;
-    let r = hasty.post(KEY, "/q/sql", json!({"from": DAY1, "to": DAY1, "sql": "SELECT props, count(*) FROM events GROUP BY 1 ORDER BY 1"})).await;
+    let r = hasty
+        .post(
+            KEY,
+            "/q/sql",
+            json!({"from": DAY1, "to": DAY1, "sql": "SELECT props, count(*) FROM events GROUP BY 1 ORDER BY 1"}),
+        )
+        .await;
     assert_eq!((r.status, r.code().as_str()), (StatusCode::REQUEST_TIMEOUT, "timeout"));
     // The same queries fit in the default budget.
     let roomy = app_with(&store, test_config()).await;

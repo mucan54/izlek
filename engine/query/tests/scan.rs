@@ -356,8 +356,7 @@ async fn declared_ordering_lets_the_planner_drop_sorts() {
     // …a prefix of the key works too, and so does a per-person window.
     let text = plan_of("SELECT person_key, ts FROM events ORDER BY person_key, ts").await;
     assert!(!text.contains("SortExec"), "{text}");
-    let text =
-        plan_of("SELECT person_key, row_number() OVER (PARTITION BY person_key ORDER BY ts) FROM events").await;
+    let text = plan_of("SELECT person_key, row_number() OVER (PARTITION BY person_key ORDER BY ts) FROM events").await;
     assert!(!text.contains("SortExec"), "{text}");
     // An order the files do not have still sorts.
     let text = plan_of("SELECT person_key, ts FROM events ORDER BY ts").await;
@@ -369,7 +368,14 @@ async fn declared_ordering_lets_the_planner_drop_sorts() {
 
     // And the merged result really is in order.
     ordered.store(true, std::sync::atomic::Ordering::Relaxed);
-    let batches = cx.ctx.sql("SELECT person_key, ts, event FROM events ORDER BY person_key, ts").await.unwrap().collect().await.unwrap();
+    let batches = cx
+        .ctx
+        .sql("SELECT person_key, ts, event FROM events ORDER BY person_key, ts")
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
     let got = triples(&batches, d);
     let mut sorted = got.clone();
     sorted.sort();
@@ -392,7 +398,11 @@ async fn disk_tier_serves_repeat_reads_and_plan_summary_hides_literals() {
     let engine = engine_with(&store, cfg).await;
     let f = Filter::parse(&serde_json::json!({"prop": "props.k", "op": "eq", "value": "s3cr3t-literal"})).unwrap();
     let cx1 = cx(&engine, DAY1, DAY1).await;
-    let req = ScanRequest { exprs: cols(&["person_key", "ts", "event"]), filters: vec![cx1.compiler.compile(&f)], ordered: true };
+    let req = ScanRequest {
+        exprs: cols(&["person_key", "ts", "event"]),
+        filters: vec![cx1.compiler.compile(&f)],
+        ordered: true,
+    };
     assert_eq!(triples(&collect(&cx1, &req).await, d), [t("u:1", 20, "a")]);
     assert!(engine.files.counters.remote_bytes.load(std::sync::atomic::Ordering::Relaxed) > 0);
 
@@ -430,12 +440,9 @@ async fn rewritten_l0_with_a_stale_manifest_size_is_still_readable() {
     assert_eq!(triples(&collect(&cx(&engine, DAY1, DAY1).await, &req).await, d).len(), 1);
     // Same key, different bytes and size; the manifest is not touched.
     let other = Store::memory();
-    let rewritten = add_file(
-        &other,
-        FileSpec::l0(P, DAY1, "p1"),
-        (0..50).map(|i| ev("x", Some("1"), d + 1 + i, "a")).collect(),
-    )
-    .await;
+    let rewritten =
+        add_file(&other, FileSpec::l0(P, DAY1, "p1"), (0..50).map(|i| ev("x", Some("1"), d + 1 + i, "a")).collect())
+            .await;
     assert_eq!(rewritten, key);
     store.put(&key, other.get(&key).await.unwrap().unwrap()).await.unwrap();
     // A fresh engine (no cached footer) must cope with the wrong size in the manifest.
@@ -448,17 +455,29 @@ async fn files_outside_a_person_filter_are_not_opened() {
     // A big day split into two L2 files by person range (design §10.1).
     let store = Store::memory();
     let d = day_ms(DAY1);
-    add_file(&store, FileSpec::l0(P, DAY1, "00000001-000").level(2), vec![ev("a1", Some("alice"), d + 1, "x"), ev("a2", Some("bob"), d + 2, "x")])
-        .await;
-    add_file(&store, FileSpec::l0(P, DAY1, "00000001-001").level(2), vec![ev("a3", Some("carol"), d + 3, "x"), ev("a4", Some("dave"), d + 4, "x")])
-        .await;
+    add_file(
+        &store,
+        FileSpec::l0(P, DAY1, "00000001-000").level(2),
+        vec![ev("a1", Some("alice"), d + 1, "x"), ev("a2", Some("bob"), d + 2, "x")],
+    )
+    .await;
+    add_file(
+        &store,
+        FileSpec::l0(P, DAY1, "00000001-001").level(2),
+        vec![ev("a3", Some("carol"), d + 3, "x"), ev("a4", Some("dave"), d + 4, "x")],
+    )
+    .await;
     let engine = engine(&store).await;
     let run = |filter: serde_json::Value| {
         let engine = engine.clone();
         async move {
             let cx = cx(&engine, DAY1, DAY1).await;
             let f = Filter::parse(&filter).unwrap();
-            let req = ScanRequest { exprs: cols(&["person_key", "ts", "event"]), filters: vec![cx.compiler.compile(&f)], ordered: true };
+            let req = ScanRequest {
+                exprs: cols(&["person_key", "ts", "event"]),
+                filters: vec![cx.compiler.compile(&f)],
+                ordered: true,
+            };
             let rows = triples(&collect(&cx, &req).await, d);
             (rows, cx.stats.files.load(std::sync::atomic::Ordering::Relaxed))
         }
@@ -468,7 +487,8 @@ async fn files_outside_a_person_filter_are_not_opened() {
     assert_eq!(files, 1, "only the file whose person range contains the key is read");
     let (rows, files) = run(serde_json::json!({"prop": "person_key", "op": "in", "value": ["u:alice", "u:bob"]})).await;
     assert_eq!((rows.len(), files), (2, 1));
-    let (rows, files) = run(serde_json::json!({"prop": "person_key", "op": "in", "value": ["u:alice", "u:dave"]})).await;
+    let (rows, files) =
+        run(serde_json::json!({"prop": "person_key", "op": "in", "value": ["u:alice", "u:dave"]})).await;
     assert_eq!((rows.len(), files), (2, 2));
     let (rows, files) = run(serde_json::json!({"prop": "person_key", "op": "eq", "value": "u:zed"})).await;
     assert_eq!((rows.len(), files), (0, 0));

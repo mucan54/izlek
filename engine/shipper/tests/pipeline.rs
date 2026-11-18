@@ -587,7 +587,15 @@ async fn run_loop_holds_the_lease_and_ships() {
     let lease = la_core::lease::Lease::new(store.clone(), "shipper-1-0", "someone-else");
     assert_eq!(lease.current().await.unwrap().unwrap().holder, "ship-a");
     assert!(!lease.try_hold(la_core::time::now_ms()).await.unwrap(), "a standby cannot take a live lease");
-    let text = metrics.render();
+    // The manifest becomes visible before the plan is finished (`_done`, gauges): wait for the tick to end.
+    let mut text = metrics.render();
+    for _ in 0..200 {
+        if text.contains("la_shipper_segments_pending{shard=\"1-0\"} 0") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        text = metrics.render();
+    }
     assert!(text.contains("la_shipper_lease_held{shard=\"1-0\"} 1"), "{text}");
     assert!(text.contains("la_shipper_segments_pending{shard=\"1-0\"} 0"), "{text}");
     assert!(text.contains("la_shipper_ship_lag_seconds{shard=\"1-0\"} 0"), "{text}");

@@ -8,7 +8,7 @@ mod native;
 mod posthog;
 mod replay;
 
-use crate::props::{PropList, PropVal};
+use crate::props::PropList;
 use la_codec::wal::{Envelope, FORMAT_NATIVE, FORMAT_POSTHOG, FORMAT_REPLAY_INDEX};
 use la_codec::wire::{MAX_KEY_BYTES, MAX_PROPS, MAX_VALUE_BYTES};
 use la_core::identity::Candidate;
@@ -162,13 +162,5 @@ pub fn decode_entry(
         FORMAT_POSTHOG => posthog::decode(env, body, drop_keys, out, st),
         FORMAT_REPLAY_INDEX => replay::decode(env, body, out, st),
         _ => st.unknown_format += 1,
-    }
-}
-
-#[allow(dead_code)]
-pub(crate) fn str_prop(props: &PropList, key: &str) -> Option<String> {
-    match crate::props::find(props, key).map(|i| &props[i].1) {
-        Some(PropVal::Str(s)) => Some(s.clone()),
-        _ => None,
     }
 }

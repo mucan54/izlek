@@ -166,6 +166,9 @@ struct Entry {
     bytes: usize,
 }
 
+/// `(body, files, manifest versions)` of a cached result.
+type CacheHit = (Arc<Value>, u64, Arc<BTreeMap<String, u64>>);
+
 struct CacheState {
     lru: LruCache<[u8; 32], Entry>,
     bytes: usize,
@@ -191,7 +194,7 @@ impl ResultCache {
         }
     }
 
-    fn get(&self, key: &[u8; 32]) -> Option<(Arc<Value>, u64, Arc<BTreeMap<String, u64>>)> {
+    fn get(&self, key: &[u8; 32]) -> Option<CacheHit> {
         if self.cap == 0 {
             return None;
         }
@@ -277,7 +280,14 @@ impl Service {
         let manifests = Arc::new(snap.manifest_versions());
         let key = Self::cache_key(project, kind, body, &snap.version_fingerprint());
         if let Some((cached, files, manifests)) = self.cache.get(&key) {
-            return Ok(Outcome { body: (*cached).clone(), cached: true, bytes_scanned: 0, files, manifests, plans: vec![] });
+            return Ok(Outcome {
+                body: (*cached).clone(),
+                cached: true,
+                bytes_scanned: 0,
+                files,
+                manifests,
+                plans: vec![],
+            });
         }
         let limit = match snap.config.scan_limit_bytes {
             0 => self.engine.cfg.scan_limit_bytes,
@@ -297,8 +307,18 @@ impl Service {
 
     /// Runs one query for `project` and returns the response body with `meta`.
     pub async fn query(&self, project: u32, kind: Kind, body: &Value) -> ApiResult<Value> {
+        self.query_traced(project, kind, body, "").await
+    }
+
+    /// Like [`Self::query`], tagging log lines with the caller's request id.
+    pub async fn query_traced(&self, project: u32, kind: Kind, body: &Value, request_id: &str) -> ApiResult<Value> {
         let started = Instant::now();
-        let result = self.query_inner(project, kind, body, started).await;
+        let result = self.query_inner(project, kind, body, started, request_id).await;
+        if let Err(e) = &result {
+            if e.status >= 500 {
+                tracing::error!(project, kind = kind.name(), request_id, code = e.code, "query failed");
+            }
+        }
         let elapsed = started.elapsed();
         let status = match &result {
             Ok(_) => "ok".to_owned(),
@@ -309,7 +329,14 @@ impl Service {
         result
     }
 
-    async fn query_inner(&self, project: u32, kind: Kind, body: &Value, started: Instant) -> ApiResult<Value> {
+    async fn query_inner(
+        &self,
+        project: u32,
+        kind: Kind,
+        body: &Value,
+        started: Instant,
+        request_id: &str,
+    ) -> ApiResult<Value> {
         let req = Request::parse(kind, body)?;
         let limit = self.engine.project_config(project).max_concurrent_queries;
         let timeout = self.engine.cfg.timeout;
@@ -325,7 +352,7 @@ impl Service {
         };
         let elapsed = started.elapsed();
         if elapsed >= self.engine.cfg.slow_query && !outcome.cached {
-            self.log_slow(project, kind, body, elapsed, &outcome);
+            self.log_slow(project, kind, body, elapsed, &outcome, request_id);
         }
         let mut response = outcome.body;
         response["meta"] = json!({
@@ -340,12 +367,14 @@ impl Service {
 
     /// Slow-query log: plan shape and I/O only. The request is identified by
     /// a hash — its text may contain literals (event content, PII).
-    fn log_slow(&self, project: u32, kind: Kind, body: &Value, elapsed: Duration, outcome: &Outcome) {
-        let digest: String = Sha256::digest(canonical(body).as_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect();
+    fn log_slow(&self, project: u32, kind: Kind, body: &Value, elapsed: Duration, outcome: &Outcome, request_id: &str) {
+        let digest: String =
+            Sha256::digest(canonical(body).as_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect();
         tracing::warn!(
             target: "la_query::slow",
             project,
             kind = kind.name(),
+            request_id,
             request_sha = %digest,
             elapsed_ms = elapsed.as_millis() as u64,
             bytes_scanned = outcome.bytes_scanned,

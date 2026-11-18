@@ -49,6 +49,9 @@ struct TombstoneState {
     digest: Arc<str>,
 }
 
+/// The person table and the identity version it was resolved with.
+type PersonsState = (Arc<PersonTable>, u64);
+
 #[derive(Default)]
 struct ProjectState {
     days: Mutex<Option<Timed<Arc<Vec<String>>>>>,
@@ -56,7 +59,7 @@ struct ProjectState {
     schema: Mutex<Option<Timed<Arc<ProjectSchema>>>>,
     tombstones: Mutex<Option<Timed<TombstoneState>>>,
     identity: tokio::sync::Mutex<Option<Timed<IdentityState>>>,
-    persons: tokio::sync::Mutex<Option<Timed<(Arc<PersonTable>, u64)>>>,
+    persons: tokio::sync::Mutex<Option<Timed<PersonsState>>>,
     last_used: Mutex<Option<Instant>>,
 }
 
@@ -340,7 +343,8 @@ impl Engine {
         let st = self.project(project);
         let existing = self.load_days(project, &st).await?;
         let (first, last) = (time::day_of(from_ms), time::day_of(to_ms - 1));
-        let wanted: Vec<&String> = existing.iter().filter(|d| d.as_str() >= first.as_str() && d.as_str() <= last.as_str()).collect();
+        let wanted: Vec<&String> =
+            existing.iter().filter(|d| d.as_str() >= first.as_str() && d.as_str() <= last.as_str()).collect();
         let mut days = Vec::with_capacity(wanted.len());
         for chunk in wanted.chunks(16) {
             let loaded = futures::future::join_all(chunk.iter().map(|d| self.load_manifest(project, &st, d))).await;
@@ -353,8 +357,7 @@ impl Engine {
         }
         let min_identity = days.iter().flat_map(|m| m.files.iter().map(|f| f.identity_version)).max().unwrap_or(0);
         let identity = self.load_identity(project, &st, min_identity).await?;
-        let persons =
-            if need_persons { Some(self.load_persons(project, &st, &identity.map).await?) } else { None };
+        let persons = if need_persons { Some(self.load_persons(project, &st, &identity.map).await?) } else { None };
         let tombs = self.load_tombstones(project, &st, false).await?;
         let schema = self.load_schema(project, &st).await?;
         Ok(Snapshot {

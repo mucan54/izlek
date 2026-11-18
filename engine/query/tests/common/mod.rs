@@ -171,7 +171,12 @@ pub async fn link(store: &Store, project: u32, plan: u64, links: &[(&str, &str)]
     let candidates = links
         .iter()
         .enumerate()
-        .map(|(i, (a, u))| Candidate { anon_id: a.to_string(), user_id: u.to_string(), ts: i as i64, uuid: uuid(i as u64) })
+        .map(|(i, (a, u))| Candidate {
+            anon_id: a.to_string(),
+            user_id: u.to_string(),
+            ts: i as i64,
+            uuid: uuid(i as u64),
+        })
         .collect();
     identity::append_delta(store, project, "1-0", plan, candidates, &mut map).await.unwrap().version
 }
@@ -179,7 +184,13 @@ pub async fn link(store: &Store, project: u32, plan: u64, links: &[(&str, &str)]
 pub async fn set_person(store: &Store, project: u32, plan: u64, writes: &[(&str, &str, &str, i64)]) {
     let writes = writes
         .iter()
-        .map(|(pk, k, v, ts)| PropWrite { person_key: pk.to_string(), key: k.to_string(), value: v.to_string(), ts: *ts, seq: 0 })
+        .map(|(pk, k, v, ts)| PropWrite {
+            person_key: pk.to_string(),
+            key: k.to_string(),
+            value: v.to_string(),
+            ts: *ts,
+            seq: 0,
+        })
         .collect();
     persons::append_delta(store, project, "1-0", plan, writes).await.unwrap();
 }
@@ -266,7 +277,8 @@ pub struct Reply {
 
 impl Reply {
     pub fn json(&self) -> Value {
-        serde_json::from_slice(&self.bytes).unwrap_or_else(|e| panic!("not JSON ({e}): {:?}", String::from_utf8_lossy(&self.bytes)))
+        serde_json::from_slice(&self.bytes)
+            .unwrap_or_else(|e| panic!("not JSON ({e}): {:?}", String::from_utf8_lossy(&self.bytes)))
     }
     pub fn code(&self) -> String {
         self.json()["error"]["code"].as_str().unwrap_or_default().to_owned()
@@ -300,7 +312,8 @@ impl App {
     }
 
     pub async fn get(&self, key: &str, path_and_query: &str) -> Reply {
-        let req = Request::get(path_and_query).header("authorization", format!("Bearer {key}")).body(Body::empty()).unwrap();
+        let req =
+            Request::get(path_and_query).header("authorization", format!("Bearer {key}")).body(Body::empty()).unwrap();
         self.send(req).await
     }
 }

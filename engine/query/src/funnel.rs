@@ -473,7 +473,7 @@ impl FunnelAcc {
 #[inline]
 fn advance(chain: &mut Chain, stats: &mut [StepStat], steps: usize, window: i64, ts: i64, mask: u32, starts: bool) {
     // High to low so one row never counts for two consecutive steps.
-    for j in 1..steps {
+    for j in (1..steps).rev() {
         if mask >> j & 1 == 0 {
             continue;
         }
@@ -587,8 +587,7 @@ mod tests {
         let broken = [("A", 1, 0b001, None), ("A", 2, 0b010, None), ("A", 3, 0, None), ("A", 4, 0b100, None)];
         assert_eq!(counts(&run(s, &broken).total), [1, 1, 0]);
         // Restarting: s1 s1 s2 s3 works off the second s1.
-        let restart =
-            [("A", 1, 0b001, None), ("A", 2, 0b001, None), ("A", 3, 0b010, None), ("A", 4, 0b100, None)];
+        let restart = [("A", 1, 0b001, None), ("A", 2, 0b001, None), ("A", 3, 0b010, None), ("A", 4, 0b100, None)];
         let r = run(s, &restart);
         assert_eq!(counts(&r.total), [1, 1, 1]);
         assert_eq!(r.total[2].durations.median(), Some(0.001));

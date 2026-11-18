@@ -20,6 +20,7 @@ use std::sync::Arc;
 pub const MAX_BODY_BYTES: usize = 1 << 20;
 pub const H_INTERNAL: &str = "x-la-internal";
 pub const H_PROJECT: &str = "x-la-project";
+pub const H_REQUEST_ID: &str = "x-request-id";
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
@@ -90,14 +91,40 @@ fn parse_body(body: &Bytes) -> ApiResult<Value> {
     serde_json::from_slice(body).map_err(|e| ApiError::bad_request(format!("invalid JSON body: {e}")))
 }
 
+/// The caller's `X-Request-Id` if it is a plain token, otherwise a fresh one.
+fn request_id(headers: &HeaderMap) -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let given = headers.get(H_REQUEST_ID).and_then(|v| v.to_str().ok()).filter(|s| {
+        !s.is_empty()
+            && s.len() <= 64
+            && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    });
+    match given {
+        Some(s) => s.to_owned(),
+        None => {
+            let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let seed = format!("{n}-{:?}", std::time::SystemTime::now());
+            Sha256::digest(seed.as_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect()
+        }
+    }
+}
+
+fn with_request_id(mut response: Response, id: &str) -> Response {
+    if let Ok(v) = HeaderValue::from_str(id) {
+        response.headers_mut().insert(H_REQUEST_ID, v);
+    }
+    response
+}
+
 async fn run_query(svc: Arc<Service>, kind: Kind, headers: HeaderMap, body: Bytes) -> Response {
+    let id = request_id(&headers);
     let result = async {
         let project = authenticate(&svc.engine, &headers)?;
         let body = parse_body(&body)?;
-        svc.query(project, kind, &body).await
+        svc.query_traced(project, kind, &body, &id).await
     }
     .await;
-    match result {
+    let response = match result {
         Ok(v) => json_response(StatusCode::OK, &v),
         Err(e) => {
             if e.status == 401 || e.status == 403 {
@@ -105,7 +132,8 @@ async fn run_query(svc: Arc<Service>, kind: Kind, headers: HeaderMap, body: Byte
             }
             e.into_response()
         }
-    }
+    };
+    with_request_id(response, &id)
 }
 
 macro_rules! query_route {
@@ -139,7 +167,11 @@ async fn schema(State(svc): State<Arc<Service>>, headers: HeaderMap, body: Bytes
     }
 }
 
-async fn replay(State(svc): State<Arc<Service>>, headers: HeaderMap, Query(params): Query<HashMap<String, String>>) -> Response {
+async fn replay(
+    State(svc): State<Arc<Service>>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
     let result = async {
         let project = authenticate(&svc.engine, &headers)?;
         let key = params.get("key").ok_or_else(|| ApiError::bad_request("missing `key`"))?;

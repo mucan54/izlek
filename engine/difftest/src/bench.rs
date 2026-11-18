@@ -130,10 +130,11 @@ async fn write_project(store: &Store, project: u32, cfg: &BenchConfig, layout: L
         let key = keys::level_file(project, &day, 2, 1, 0);
         let entry = match layout {
             Layout::TimeSorted => {
-                rows.sort_by(|a, b| (a.ts, a.uuid).cmp(&(b.ts, b.uuid)));
+                rows.sort_by_key(|a| (a.ts, a.uuid));
                 let schema = events_schema(&[]);
                 let batches: Vec<_> = rows.chunks(8192).map(|c| rows_to_batch(c, &[]).expect("batch")).collect();
-                let bytes = write_parquet(&schema, &batches, events_writer_props(&schema, vec![]).expect("props")).expect("parquet");
+                let bytes = write_parquet(&schema, &batches, events_writer_props(&schema, vec![]).expect("props"))
+                    .expect("parquet");
                 let mut people: Vec<&str> = rows.iter().map(|r| r.person_key.as_str()).collect();
                 people.sort_unstable();
                 let entry = FileEntry {
@@ -153,7 +154,8 @@ async fn write_project(store: &Store, project: u32, cfg: &BenchConfig, layout: L
             }
             _ => {
                 rows.sort_by(|a, b| a.sort_key_cmp(b));
-                let meta = EventsFileMeta { project, day: day.clone(), level: 2, schema_version: 0, identity_version: 0 };
+                let meta =
+                    EventsFileMeta { project, day: day.clone(), level: 2, schema_version: 0, identity_version: 0 };
                 let (bytes, mut entry) = write_events_file(&rows, &[], &meta).expect("events file");
                 entry.key = key.clone();
                 store.put(&key, bytes).await.expect("put");
@@ -173,10 +175,16 @@ async fn write_project(store: &Store, project: u32, cfg: &BenchConfig, layout: L
         // The links arrive after every file was written (identity_version 0).
         let candidates: Vec<Candidate> = (0..cfg.persons)
             .filter(|p| late(*p))
-            .map(|p| Candidate { anon_id: format!("dev{p:07}"), user_id: format!("{p:07}"), ts: identify_at(p), uuid: [0; 16] })
+            .map(|p| Candidate {
+                anon_id: format!("dev{p:07}"),
+                user_id: format!("{p:07}"),
+                ts: identify_at(p),
+                uuid: [0; 16],
+            })
             .collect();
         let mut map = IdentityMap::default();
-        out.links = identity::append_delta(store, project, "1-0", 1, candidates, &mut map).await.expect("links").added as u64;
+        out.links =
+            identity::append_delta(store, project, "1-0", 1, candidates, &mut map).await.expect("links").added as u64;
     }
     out
 }
@@ -273,23 +281,44 @@ pub async fn run(cfg: &BenchConfig) -> String {
 
     // Warm the footer cache and the page cache so every variant is measured hot.
     for (project, _) in &layouts {
-        let _ = svc.query(*project, Kind::Sql, &with(json!({"sql": "SELECT count(*), count(DISTINCT event) FROM events"}))).await;
+        let _ = svc
+            .query(*project, Kind::Sql, &with(json!({"sql": "SELECT count(*), count(DISTINCT event) FROM events"})))
+            .await;
     }
 
     // ---- (2) funnel operator vs plain SQL -----------------------------------
     report.push_str("\n### (2) Funnel: operator vs plain SQL (person-sorted project)\n\n");
     report.push_str(HEADER);
-    let funnel = with(json!({"steps": [{"event": "signup"}, {"event": "cart"}, {"event": "purchase"}], "window_seconds": week}));
+    let funnel =
+        with(json!({"steps": [{"event": "signup"}, {"event": "cart"}, {"event": "purchase"}], "window_seconds": week}));
     let op = measure(&svc, 1, Kind::Funnel, &funnel, cfg.runs).await;
     let op_counts: Vec<u64> = op
         .as_ref()
-        .map(|m| m.result["steps"].as_array().map(|a| a.iter().map(|s| s["count"].as_u64().unwrap_or(0)).collect()).unwrap_or_default())
+        .map(|m| {
+            m.result["steps"]
+                .as_array()
+                .map(|a| a.iter().map(|s| s["count"].as_u64().unwrap_or(0)).collect())
+                .unwrap_or_default()
+        })
         .unwrap_or_default();
     row(&mut report, "funnel operator, 3 steps, 7 d window", &op, &format!("counts {op_counts:?}"));
-    let with_bd = with(json!({"steps": [{"event": "signup"}, {"event": "cart"}, {"event": "purchase"}], "window_seconds": week, "breakdown": "platform"}));
-    row(&mut report, "funnel operator + breakdown by platform", &measure(&svc, 1, Kind::Funnel, &with_bd, cfg.runs).await, "");
-    let strict = with(json!({"steps": [{"event": "signup"}, {"event": "cart"}], "window_seconds": week, "order": "strict"}));
-    row(&mut report, "funnel operator, strict, 2 steps (reads every row)", &measure(&svc, 1, Kind::Funnel, &strict, cfg.runs).await, "");
+    let with_bd = with(
+        json!({"steps": [{"event": "signup"}, {"event": "cart"}, {"event": "purchase"}], "window_seconds": week, "breakdown": "platform"}),
+    );
+    row(
+        &mut report,
+        "funnel operator + breakdown by platform",
+        &measure(&svc, 1, Kind::Funnel, &with_bd, cfg.runs).await,
+        "",
+    );
+    let strict =
+        with(json!({"steps": [{"event": "signup"}, {"event": "cart"}], "window_seconds": week, "order": "strict"}));
+    row(
+        &mut report,
+        "funnel operator, strict, 2 steps (reads every row)",
+        &measure(&svc, 1, Kind::Funnel, &strict, cfg.runs).await,
+        "",
+    );
     // Exact semantics in SQL: chains via self-joins on the person.
     let exact = "SELECT count(DISTINCT e1.person_key), count(DISTINCT e2.person_key), count(DISTINCT e3.person_key) \
                  FROM events e1 \
@@ -307,7 +336,10 @@ pub async fn run(cfg: &BenchConfig) -> String {
                              AND e.event = 'purchase' AND e.ts > b.t2 AND e.ts <= b.t1 + INTERVAL '7 days' GROUP BY 1) \
                        SELECT (SELECT count(*) FROM a), (SELECT count(*) FROM b), (SELECT count(*) FROM c)";
     let sql_first = measure(&svc, 1, Kind::Sql, &with(json!({"sql": first_touch})), cfg.runs).await;
-    let note = sql_first.as_ref().map(|m| format!("first-signup-only approximation; counts {}", m.result["rows"][0])).unwrap_or_default();
+    let note = sql_first
+        .as_ref()
+        .map(|m| format!("first-signup-only approximation; counts {}", m.result["rows"][0]))
+        .unwrap_or_default();
     row(&mut report, "plain SQL, first-touch approximation (3 aggregations + 2 joins)", &sql_first, &note);
 
     // ---- (4) trends on person-sorted vs time-sorted files --------------------
@@ -316,9 +348,18 @@ pub async fn run(cfg: &BenchConfig) -> String {
     let hour_from = first + 3 * time::DAY_MS + 10 * 3_600_000;
     let iso = |ms: i64| chrono::TimeZone::timestamp_millis_opt(&chrono::Utc, ms).single().expect("ts").to_rfc3339();
     let trend_cases: Vec<(&str, Value)> = vec![
-        ("daily count of `purchase`", with(json!({"interval": "day", "series": [{"event": "purchase", "agg": "count"}]}))),
-        ("daily count of all events by platform", with(json!({"interval": "day", "series": [{"agg": "count"}], "breakdown": "platform"}))),
-        ("daily sum(props.amount) of `purchase`", with(json!({"interval": "day", "series": [{"event": "purchase", "agg": "sum", "prop": "props.amount"}]}))),
+        (
+            "daily count of `purchase`",
+            with(json!({"interval": "day", "series": [{"event": "purchase", "agg": "count"}]})),
+        ),
+        (
+            "daily count of all events by platform",
+            with(json!({"interval": "day", "series": [{"agg": "count"}], "breakdown": "platform"})),
+        ),
+        (
+            "daily sum(props.amount) of `purchase`",
+            with(json!({"interval": "day", "series": [{"event": "purchase", "agg": "sum", "prop": "props.amount"}]})),
+        ),
         (
             "hourly count, 2-hour window inside one day",
             json!({"from": iso(hour_from), "to": iso(hour_from + 2 * 3_600_000), "interval": "hour", "series": [{"agg": "count"}]}),
@@ -329,11 +370,27 @@ pub async fn run(cfg: &BenchConfig) -> String {
         row(&mut report, &format!("{name} — time-sorted"), &measure(&svc, 2, Kind::Trends, body, cfg.runs).await, "");
     }
     let unique_day = with(json!({"interval": "day", "series": [{"agg": "unique"}]}));
-    row(&mut report, "daily unique persons — person-sorted (streaming, exact)", &measure(&svc, 1, Kind::Trends, &unique_day, cfg.runs).await, "");
+    row(
+        &mut report,
+        "daily unique persons — person-sorted (streaming, exact)",
+        &measure(&svc, 1, Kind::Trends, &unique_day, cfg.runs).await,
+        "",
+    );
     let unique_week = with(json!({"interval": "week", "series": [{"agg": "unique"}]}));
-    row(&mut report, "weekly unique persons — person-sorted (merged stream)", &measure(&svc, 1, Kind::Trends, &unique_week, cfg.runs).await, "");
-    let sql_unique = with(json!({"sql": "SELECT date_trunc('day', ts), count(DISTINCT person_key) FROM events GROUP BY 1"}));
-    row(&mut report, "daily unique persons — SQL count(DISTINCT) on the same files", &measure(&svc, 1, Kind::Sql, &sql_unique, cfg.runs).await, "hash-based");
+    row(
+        &mut report,
+        "weekly unique persons — person-sorted (merged stream)",
+        &measure(&svc, 1, Kind::Trends, &unique_week, cfg.runs).await,
+        "",
+    );
+    let sql_unique =
+        with(json!({"sql": "SELECT date_trunc('day', ts), count(DISTINCT person_key) FROM events GROUP BY 1"}));
+    row(
+        &mut report,
+        "daily unique persons — SQL count(DISTINCT) on the same files",
+        &measure(&svc, 1, Kind::Sql, &sql_unique, cfg.runs).await,
+        "hash-based",
+    );
 
     // ---- (3) identity rewrite -------------------------------------------------
     report.push_str("\n### (3) Query-time identity rewrite\n\n");
@@ -344,7 +401,11 @@ pub async fn run(cfg: &BenchConfig) -> String {
         let w = &written[2 + i];
         variants.push((
             10 + i as u32,
-            format!("{:.0} % of persons linked late, {:.1} % of rows rewritten", r * 100.0, 100.0 * w.anon_rows as f64 / w.rows.max(1) as f64),
+            format!(
+                "{:.0} % of persons linked late, {:.1} % of rows rewritten",
+                r * 100.0,
+                100.0 * w.anon_rows as f64 / w.rows.max(1) as f64
+            ),
         ));
     }
     for (name, kind, body) in [

@@ -218,7 +218,8 @@ mod tests {
     #[test]
     fn loose_semantics() {
         let persons = Persons::new();
-        let r = row(&[("n", PVal::Int(3)), ("s", PVal::Str("3".into())), ("f", PVal::Float(3.0)), ("b", PVal::Bool(true))]);
+        let r =
+            row(&[("n", PVal::Int(3)), ("s", PVal::Str("3".into())), ("f", PVal::Float(3.0)), ("b", PVal::Bool(true))]);
         let t = |f: Value| eval(&f, &r, &persons);
         assert!(t(json!({"prop": "props.n", "op": "eq", "value": 3.0})));
         assert!(t(json!({"prop": "props.n", "op": "eq", "value": "3"})));

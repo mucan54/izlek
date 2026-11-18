@@ -130,7 +130,10 @@ impl Interval {
             Interval::Week => ((ts.div_euclid(DAY_MS) + 3).div_euclid(7) * 7 - 3) * DAY_MS,
             Interval::Month => {
                 let d = Utc.timestamp_millis_opt(ts).single().unwrap_or_default();
-                Utc.with_ymd_and_hms(d.year(), d.month(), 1, 0, 0, 0).single().map(|x| x.timestamp_millis()).unwrap_or(ts)
+                Utc.with_ymd_and_hms(d.year(), d.month(), 1, 0, 0, 0)
+                    .single()
+                    .map(|x| x.timestamp_millis())
+                    .unwrap_or(ts)
             }
         }
     }
@@ -144,7 +147,10 @@ impl Interval {
             Interval::Month => {
                 let d = Utc.timestamp_millis_opt(start).single().unwrap_or_default();
                 let (y, m) = if d.month() == 12 { (d.year() + 1, 1) } else { (d.year(), d.month() + 1) };
-                Utc.with_ymd_and_hms(y, m, 1, 0, 0, 0).single().map(|x| x.timestamp_millis()).unwrap_or(start + 31 * DAY_MS)
+                Utc.with_ymd_and_hms(y, m, 1, 0, 0, 0)
+                    .single()
+                    .map(|x| x.timestamp_millis())
+                    .unwrap_or(start + 31 * DAY_MS)
             }
         }
     }

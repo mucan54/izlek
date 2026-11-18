@@ -145,7 +145,13 @@ pub fn kind(raw: &str) -> Kind {
 /// fraction; anything else → shortest round-trip decimal.
 pub fn fmt_f64(x: f64) -> String {
     if !x.is_finite() {
-        return if x.is_nan() { "NaN".into() } else if x > 0.0 { "Infinity".into() } else { "-Infinity".into() };
+        return if x.is_nan() {
+            "NaN".into()
+        } else if x > 0.0 {
+            "Infinity".into()
+        } else {
+            "-Infinity".into()
+        };
     }
     if x == 0.0 {
         return "0".into();

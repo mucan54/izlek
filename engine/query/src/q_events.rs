@@ -182,7 +182,10 @@ pub async fn run(cx: &QueryCx, req: &EventsRequest) -> ApiResult<Value> {
         snap.from_ms = lo;
         snap.to_ms = hi;
         snap.days = vec![day];
-        let scan = cx.plan_with(Arc::new(snap), &ScanRequest { exprs: exprs.clone(), filters: filters.clone(), ordered: false })?;
+        let scan = cx.plan_with(
+            Arc::new(snap),
+            &ScanRequest { exprs: exprs.clone(), filters: filters.clone(), ordered: false },
+        )?;
         let schema = scan.schema();
         let options = SortOptions { descending: req.desc, nulls_first: false };
         let key = ["ts", "uuid"]

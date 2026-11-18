@@ -205,9 +205,8 @@ impl FileCache {
     fn open_local(&self, key: &str, size: u64) -> Option<Arc<std::fs::File>> {
         let dir = self.dir.as_ref()?;
         let name = file_name(&cache_key(key, size));
-        if self.disk.lock().unwrap().lru.get(&name).is_none() {
-            return None;
-        }
+        // `get` also marks the entry as recently used.
+        self.disk.lock().unwrap().lru.get(&name)?;
         match std::fs::File::open(dir.join(&name)) {
             Ok(f) => Some(Arc::new(f)),
             Err(_) => {
@@ -357,11 +356,8 @@ impl CachedReader {
             let total: u64 = ranges.iter().map(|r| r.end - r.start).sum();
             let read = move || ranges.iter().map(|r| read_local(&file, r)).collect::<std::io::Result<Vec<_>>>();
             // Small reads are cheaper inline than a round trip through the blocking pool.
-            let out = if total <= 64 * 1024 {
-                read()
-            } else {
-                tokio::task::spawn_blocking(read).await.map_err(external)?
-            };
+            let out =
+                if total <= 64 * 1024 { read() } else { tokio::task::spawn_blocking(read).await.map_err(external)? };
             return out.map_err(external);
         }
         let total: u64 = ranges.iter().map(|r| r.end - r.start).sum();

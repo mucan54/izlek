@@ -105,10 +105,12 @@ async fn process_project(
             let Some(group) = triggers::next_job(&m, now_ms, &ctx.cfg) else {
                 break;
             };
-            if env.is_none() {
-                env = Some(Arc::new(ProjectEnv::load(store, project).await?));
-            }
-            let Some(e) = &env else { break };
+            // State newer than the snapshot `m` that names the job's inputs.
+            let fresh = match env.take() {
+                Some(e) => ProjectEnv::refreshed(e, store).await?,
+                None => Arc::new(ProjectEnv::load(store, project).await?),
+            };
+            let e = env.insert(fresh);
             match job::compact(ctx, e, day, group).await? {
                 Outcome::Committed { manifest, .. } => {
                     report.compactions += 1;

@@ -34,7 +34,9 @@ func TombstoneKey(projectID uint32, tsMillis int64, id string) string {
 }
 
 // flagsStateName is the publish_state row holding a project's ruleset version.
-func flagsStateName(projectID uint32) string { return "flags/p=" + strconv.FormatUint(uint64(projectID), 10) }
+func flagsStateName(projectID uint32) string {
+	return "flags/p=" + strconv.FormatUint(uint64(projectID), 10)
+}
 
 // TokenEntry is one token of control/tokens.json.
 type TokenEntry struct {

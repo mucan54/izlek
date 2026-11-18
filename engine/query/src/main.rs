@@ -36,9 +36,7 @@ fn fail(message: String) -> ! {
 async fn main() {
     tracing_subscriber::fmt()
         .json()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("LA_LOG").unwrap_or_else(|_| "info".into()),
-        )
+        .with_env_filter(tracing_subscriber::EnvFilter::try_from_env("LA_LOG").unwrap_or_else(|_| "info".into()))
         .init();
 
     let cfg = Config::from_env().unwrap_or_else(|e| fail(e));
@@ -52,8 +50,7 @@ async fn main() {
     }
     let refresher = engine.spawn_refresher();
     let service = Service::new(engine);
-    let listener =
-        tokio::net::TcpListener::bind(&listen).await.unwrap_or_else(|e| fail(format!("bind {listen}: {e}")));
+    let listener = tokio::net::TcpListener::bind(&listen).await.unwrap_or_else(|e| fail(format!("bind {listen}: {e}")));
     let served = axum::serve(listener, router(service)).with_graceful_shutdown(shutdown_signal()).await;
     refresher.abort();
     if let Err(e) = served {

@@ -39,7 +39,8 @@ pub fn schema_json(schema: &ProjectSchema, snap: &Snapshot) -> Value {
         .map(|(key, (n, types))| match schema.column(key) {
             Some(c) => (n, key, c.ty.as_str().to_owned(), true),
             None => {
-                let dominant = types.iter().filter(|(t, _)| **t != "null").max_by_key(|(t, c)| (**c, std::cmp::Reverse(**t)));
+                let dominant =
+                    types.iter().filter(|(t, _)| **t != "null").max_by_key(|(t, c)| (**c, std::cmp::Reverse(**t)));
                 (n, key, dominant.map_or("string", |(t, _)| *t).to_owned(), false)
             }
         })

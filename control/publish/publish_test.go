@@ -158,7 +158,7 @@ func TestControlFilesMatchTheSpec(t *testing.T) {
 	f := newFixture(t)
 	p1 := f.project("Acme")
 	f.write(func(tx *sql.Tx) error {
-		p1.RetentionDays, p1.DropKeys, p1.ScanLimitBytes = 90, []string{"email"}, 1 << 30
+		p1.RetentionDays, p1.DropKeys, p1.ScanLimitBytes = 90, []string{"email"}, 1<<30
 		return db.UpdateProject(f.ctx, tx, p1)
 	})
 	tok := f.token(p1.ID, func(t *db.Token) {

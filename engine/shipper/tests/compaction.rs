@@ -180,16 +180,17 @@ async fn shipper_appends_while_the_compactor_commits() {
             for f in &m.files {
                 assert!(store.exists(&f.key).await.unwrap(), "{} is listed but missing", f.key);
             }
-            // Keys are listed once, and no L0 of an already compacted plan came back:
-            // every L0 still listed belongs to a plan newer than the newest compaction output.
+            // Keys are listed once; a compacted file holds each row at most once
+            // (the exact "nothing lost, nothing resurrected" row accounting is in
+            // la-compactor's `concurrent_appends_and_compactions`, whose input has no duplicates).
             let mut keys_listed: Vec<&str> = m.files.iter().map(|f| f.key.as_str()).collect();
             keys_listed.sort_unstable();
             keys_listed.dedup();
             assert_eq!(keys_listed.len(), m.files.len());
-            let l0_rows: u64 = m.files.iter().filter(|f| f.level == 0).map(|f| f.rows).sum();
-            let compacted_rows: u64 = m.files.iter().filter(|f| f.level > 0).map(|f| f.rows).sum();
-            assert!(compacted_rows as usize <= got[&day].len(), "{day}: compacted files hold each row at most once");
-            assert!((compacted_rows + l0_rows) as usize >= got[&day].len());
+            for f in m.files.iter().filter(|f| f.level > 0) {
+                assert!(f.rows as usize <= got[&day].len(), "{day}: {} repeats rows", f.key);
+            }
+            assert!(m.total_rows() as usize >= got[&day].len());
         }
     }
 }

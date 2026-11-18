@@ -140,7 +140,13 @@ fn column_json(col: &ArrayRef) -> ApiResult<Vec<Value>> {
     let null = |i: usize| col.is_null(i);
     match col.data_type() {
         DataType::Null => out.resize(n, Value::Null),
-        DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 | DataType::UInt8 | DataType::UInt16 | DataType::UInt32 => {
+        DataType::Int8
+        | DataType::Int16
+        | DataType::Int32
+        | DataType::Int64
+        | DataType::UInt8
+        | DataType::UInt16
+        | DataType::UInt32 => {
             let a = arrow::compute::cast(col, &DataType::Int64)?;
             let a = a.as_primitive::<Int64Type>();
             out.extend((0..n).map(|i| if a.is_null(i) { Value::Null } else { int_json(a.value(i)) }));
@@ -156,20 +162,36 @@ fn column_json(col: &ArrayRef) -> ApiResult<Vec<Value>> {
         DataType::Float16 | DataType::Float32 | DataType::Float64 => {
             let a = arrow::compute::cast(col, &DataType::Float64)?;
             let a = a.as_primitive::<arrow::datatypes::Float64Type>();
-            out.extend((0..n).map(|i| if a.is_null(i) || !a.value(i).is_finite() { Value::Null } else { json!(a.value(i)) }));
+            out.extend((0..n).map(|i| {
+                if a.is_null(i) || !a.value(i).is_finite() {
+                    Value::Null
+                } else {
+                    json!(a.value(i))
+                }
+            }));
         }
         DataType::Timestamp(_, _) => {
             let a = arrow::compute::cast(col, &DataType::Timestamp(TimeUnit::Millisecond, None))?;
             let a = a.as_primitive::<arrow::datatypes::TimestampMillisecondType>();
             out.extend((0..n).map(|i| if a.is_null(i) { Value::Null } else { int_json(a.value(i)) }));
         }
-        DataType::Binary => out.extend((0..n).map(|i| if null(i) { Value::Null } else { json!(hex(col.as_binary::<i32>().value(i))) })),
-        DataType::LargeBinary => out.extend((0..n).map(|i| if null(i) { Value::Null } else { json!(hex(col.as_binary::<i64>().value(i))) })),
-        DataType::BinaryView => out.extend((0..n).map(|i| if null(i) { Value::Null } else { json!(hex(col.as_binary_view().value(i))) })),
-        DataType::FixedSizeBinary(_) => {
-            out.extend((0..n).map(|i| if null(i) { Value::Null } else { json!(hex(col.as_fixed_size_binary().value(i))) }))
+        DataType::Binary => {
+            out.extend((0..n).map(|i| if null(i) { Value::Null } else { json!(hex(col.as_binary::<i32>().value(i))) }))
         }
-        DataType::Utf8 => out.extend((0..n).map(|i| if null(i) { Value::Null } else { json!(col.as_string::<i32>().value(i)) })),
+        DataType::LargeBinary => {
+            out.extend((0..n).map(|i| if null(i) { Value::Null } else { json!(hex(col.as_binary::<i64>().value(i))) }))
+        }
+        DataType::BinaryView => {
+            out.extend((0..n).map(|i| if null(i) { Value::Null } else { json!(hex(col.as_binary_view().value(i))) }))
+        }
+        DataType::FixedSizeBinary(_) => {
+            out.extend(
+                (0..n).map(|i| if null(i) { Value::Null } else { json!(hex(col.as_fixed_size_binary().value(i))) }),
+            )
+        }
+        DataType::Utf8 => {
+            out.extend((0..n).map(|i| if null(i) { Value::Null } else { json!(col.as_string::<i32>().value(i)) }))
+        }
         _ => {
             let options = FormatOptions::default();
             let fmt = ArrayFormatter::try_new(col.as_ref(), &options)?;

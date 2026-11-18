@@ -139,12 +139,16 @@ taşır; manifest yarışı kaybedilirse çıktılar silinip yeni adla yeniden y
 | WAL zstd bayt/event (`w`) | **30,9** |
 | L0 Parquet bayt/event | 23,5 (500 bin satırlık dosyalar) |
 | L2 Parquet bayt/event (`b`) | **23,0** |
-| Shipper verimi | **≈ 90–96 bin event/sn** (tek iş parçacığı; açma + çözme + sıralama + Parquet + yerel yazım; 250–500 bin event'lik planlar) |
-| Shipper tepe RSS | ≈ 1,2 GB (500 bin event'lik planlar, üreteç dahil) |
-| Compaction, 5 M satırlık gün | 10 L0 (117 MB) → 1 L2 (115 MB): **9,7 sn ≈ 510 bin satır/sn** (12 MB/sn); 225 bin satırın anahtarı kimlik eşlemesiyle değişti |
+| Shipper verimi | **≈ 100 bin event/sn** (tek iş parçacığı; açma + çözme + sıralama + Parquet + yerel yazım; 250–500 bin event'lik planlar; ölçümler 91–102 bin arasında) |
+| Shipper tepe RSS | 414 MB (250 bin event'lik planlar), 815 MB (500 bin event'lik planlar) — üreteç dahil; ≈ 1,5 KB/event |
+| Compaction, 5 M satırlık gün | 10 L0 (117 MB) → 1 L2 (115 MB): **9,7 sn ≈ 510 bin satır/sn** (12 MB/sn); ≈ 225 bin satırın anahtarı kimlik eşlemesiyle değişti |
 | Compaction tepe RSS | **362 MB** (varsayılan ayarlar: girdiler bellekte); 251 MB (`LA_COMPACTOR_MEM_INPUT_MB=1`, 32 MB'lık çıktılar) |
 
-Bellek sınırı gün boyutundan bağımsızdır: `girdi sayısı × batch` + bellekteki girdiler (≤ 128 MB) + anahtarı
+Shipper belleği plan boyutuyla orantılıdır (açılmış segmentler + satır başına ≈ 1,5 KB). Varsayılan 256 MB'lık
+bütçe, bu profildeki gibi küçük event'lerde (≈ 110 bayt) ≈ 2,3 M event ≈ 3,5 GB demektir; küçük event'li iş
+yüklerinde `LA_SHIPPER_BATCH_MB` düşürülmelidir.
+
+Compaction belleği ise gün boyutundan bağımsızdır: `girdi sayısı × batch` + bellekteki girdiler (≤ 128 MB) + anahtarı
 değişen satır tamponu (≤ `MAX_MOVED_ROWS`) + kişi başına `uuid` kümesi + yüklenmekte olan tek çıktı dosyası.
 
 ## Testler
@@ -172,6 +176,7 @@ WAL yaşam döngüsü, bozuk segment, rebuild.
   (istatistik kaybı olabilir).
 - Yalnızca `memory` ve `file://` arka uçlarıyla test edildi; gerçek S3/MinIO'da koşullu yazma ve hata/yeniden deneme
   davranışı ayrıca doğrulanmalı. Depo hatalarında yeniden deneme, döngünün bir sonraki turudur.
-- Tek süreçte shardkey'ler sırayla işlenir; plan içi çözme tek iş parçacıklıdır.
+- Tek süreçte shardkey'ler sırayla işlenir; plan içi çözme tek iş parçacıklıdır. Shipper satırları `EventRow`
+  olarak bellekte tutar (sütunlu kurulum yok): bkz. yukarıdaki bellek notu.
 - 256 MB bütçesi sıkıştırılmış boyuttan tahmin edilir; tek bir dev segment bütçeyi aşabilir.
 - Fuzz hedefleri (`cargo fuzz`) ve uzun süreli yük testi yok.
