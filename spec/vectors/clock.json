@@ -1,0 +1,120 @@
+{
+ "flag_bits": {
+  "clock_corrected": 1,
+  "late": 2
+ },
+ "cases": [
+  {
+   "name": "in_sync",
+   "recv_ts": 1795046400000,
+   "sent_at": 1795046399960,
+   "ts": 1795046399000,
+   "out_ts": 1795046399000,
+   "flags": 0
+  },
+  {
+   "name": "skew_just_under",
+   "recv_ts": 1795046400000,
+   "sent_at": 1795046395000,
+   "ts": 1795046394000,
+   "out_ts": 1795046394000,
+   "flags": 0
+  },
+  {
+   "name": "skew_just_over",
+   "recv_ts": 1795046400000,
+   "sent_at": 1795046394999,
+   "ts": 1795046394000,
+   "out_ts": 1795046399001,
+   "flags": 1
+  },
+  {
+   "name": "device_ahead_1h",
+   "recv_ts": 1795046400000,
+   "sent_at": 1795050000000,
+   "ts": 1795049990000,
+   "out_ts": 1795046390000,
+   "flags": 1
+  },
+  {
+   "name": "device_behind_2d",
+   "recv_ts": 1795046400000,
+   "sent_at": 1794873600000,
+   "ts": 1794873599500,
+   "out_ts": 1795046399500,
+   "flags": 1
+  },
+  {
+   "name": "future_ts_no_skew",
+   "recv_ts": 1795046400000,
+   "sent_at": 1795046399990,
+   "ts": 1795046404000,
+   "out_ts": 1795046400000,
+   "flags": 1
+  },
+  {
+   "name": "future_after_correction",
+   "recv_ts": 1795046400000,
+   "sent_at": 1795046394000,
+   "ts": 1795046399000,
+   "out_ts": 1795046400000,
+   "flags": 1
+  },
+  {
+   "name": "queued_6_days",
+   "recv_ts": 1795046400000,
+   "sent_at": 1795046399980,
+   "ts": 1794528000000,
+   "out_ts": 1794528000000,
+   "flags": 0
+  },
+  {
+   "name": "late_31_days",
+   "recv_ts": 1795046400000,
+   "sent_at": 1795046399980,
+   "ts": 1792368000000,
+   "out_ts": 1792368000000,
+   "flags": 2
+  },
+  {
+   "name": "exactly_30_days",
+   "recv_ts": 1795046400000,
+   "sent_at": 1795046399980,
+   "ts": 1792454400000,
+   "out_ts": 1792454400000,
+   "flags": 0
+  },
+  {
+   "name": "sent_at_unknown",
+   "recv_ts": 1795046400000,
+   "sent_at": 0,
+   "ts": 1795046399000,
+   "out_ts": 1795046399000,
+   "flags": 0
+  },
+  {
+   "name": "sent_at_unknown_future",
+   "recv_ts": 1795046400000,
+   "sent_at": 0,
+   "ts": 1795046400001,
+   "out_ts": 1795046400000,
+   "flags": 1
+  },
+  {
+   "name": "epoch_device",
+   "recv_ts": 1795046400000,
+   "sent_at": 86400000,
+   "ts": 86399000,
+   "out_ts": 1795046399000,
+   "flags": 1
+  },
+  {
+   "name": "negative_after_correction",
+   "recv_ts": 10000,
+   "sent_at": 100000,
+   "ts": 50000,
+   "out_ts": 0,
+   "flags": 1
+  }
+ ]
+}

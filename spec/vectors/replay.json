@@ -1,0 +1,188 @@
+{
+ "format": "LAR1",
+ "valid": [
+  {
+   "name": "login_screen",
+   "chunk": {
+    "session_id": "0193f1a2b3c47d5e8a9b0c1d2e3f4a5c",
+    "seq": 0,
+    "start_ts": 1795046400000,
+    "frames": [
+     {
+      "kind": 4,
+      "dt": 0,
+      "name": "Login"
+     },
+     {
+      "kind": 5,
+      "dt": 0,
+      "w": 390,
+      "h": 844
+     },
+     {
+      "kind": 0,
+      "dt": 0,
+      "w": 390,
+      "h": 844,
+      "nodes": [
+       {
+        "id": 1,
+        "parent": 0,
+        "type": 0,
+        "x": 0,
+        "y": 0,
+        "w": 390,
+        "h": 844,
+        "flags": 1,
+        "color": 4294967295
+       },
+       {
+        "id": 2,
+        "parent": 1,
+        "type": 1,
+        "x": 16,
+        "y": 60,
+        "w": 200,
+        "h": 24,
+        "flags": 2,
+        "text": "Hoş geldin"
+       },
+       {
+        "id": 3,
+        "parent": 1,
+        "type": 4,
+        "x": 16,
+        "y": 100,
+        "w": 358,
+        "h": 44,
+        "flags": 22,
+        "text": "••••••"
+       },
+       {
+        "id": 4,
+        "parent": 1,
+        "type": 2,
+        "x": 16,
+        "y": 160,
+        "w": 120,
+        "h": 120,
+        "flags": 0
+       },
+       {
+        "id": 5,
+        "parent": 1,
+        "type": 3,
+        "x": 16,
+        "y": 300,
+        "w": 358,
+        "h": 48,
+        "flags": 11,
+        "color": 4278879487,
+        "text": "Devam"
+       },
+       {
+        "id": 6,
+        "parent": 1,
+        "type": 5,
+        "x": -20,
+        "y": -300,
+        "w": 430,
+        "h": 2000,
+        "flags": 0
+       }
+      ]
+     },
+     {
+      "kind": 2,
+      "dt": 740,
+      "phase": 0,
+      "x": 195,
+      "y": 324
+     },
+     {
+      "kind": 2,
+      "dt": 16,
+      "phase": 1,
+      "x": 196,
+      "y": 320
+     },
+     {
+      "kind": 2,
+      "dt": 60,
+      "phase": 2,
+      "x": 196,
+      "y": 320
+     },
+     {
+      "kind": 3,
+      "dt": 500,
+      "node_id": 6,
+      "dx": 0,
+      "dy": -128
+     },
+     {
+      "kind": 1,
+      "dt": 500,
+      "removed": [
+       4
+      ],
+      "upserted": [
+       {
+        "id": 2,
+        "parent": 1,
+        "type": 1,
+        "x": 16,
+        "y": 60,
+        "w": 220,
+        "h": 24,
+        "flags": 2,
+        "text": "Hoş geldin, Ayşe"
+       },
+       {
+        "id": 7,
+        "parent": 1,
+        "type": 6,
+        "x": 0,
+        "y": 800,
+        "w": 390,
+        "h": 44,
+        "flags": 0
+       }
+      ]
+     }
+    ]
+   },
+   "hex": "4c4152310193f1a2b3c47d5e8a9b0c1d2e3f4a5c0080c0e9889f34080400054c6f67696e0605008603cc066f00008603cc060601000000008603cc0601ffffffff0201012078c80118020b486fc59f2067656c64696e03010420c801e6022c1612e280a2e280a2e280a2e280a2e280a2e280a204010220c00278780005010320d804e602300bff840aff05446576616d06010527d704ae03d00f000802e40500c301c40207021001c401c00207023c02c401c0020703f4030600ff012c01f4030104020201012078dc01180212486fc59f2067656c64696e2c204179c59f6507010600c00c86032c00"
+  },
+  {
+   "name": "empty_chunk",
+   "chunk": {
+    "session_id": "0193f1a2b3c47d5e8a9b0c1d2e3f4a5c",
+    "seq": 300,
+    "start_ts": 1795046405000,
+    "frames": []
+   },
+   "hex": "4c4152310193f1a2b3c47d5e8a9b0c1d2e3f4a5cac0288e7e9889f34"
+  }
+ ],
+ "tolerant": [
+  {
+   "name": "unknown_frame_kind_skipped",
+   "hex": "4c4152310193f1a2b3c47d5e8a9b0c1d2e3f4a5cac0288e7e9889f340563050102030405070102",
+   "chunk": {
+    "session_id": "0193f1a2b3c47d5e8a9b0c1d2e3f4a5c",
+    "seq": 300,
+    "start_ts": 1795046405000,
+    "frames": [
+     {
+      "kind": 5,
+      "dt": 7,
+      "w": 1,
+      "h": 2
+     }
+    ]
+   },
+   "note": "dt of a skipped frame is still consumed by players (7ms after +5ms)"
+  }
+ ]
+}

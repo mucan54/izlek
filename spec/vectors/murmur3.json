@@ -1,0 +1,90 @@
+{
+ "seed": 0,
+ "cases": [
+  {
+   "input": "",
+   "hash": 0,
+   "bucket": 0
+  },
+  {
+   "input": "a",
+   "hash": 1009084850,
+   "bucket": 4850
+  },
+  {
+   "input": "ab",
+   "hash": 2613040991,
+   "bucket": 991
+  },
+  {
+   "input": "abc",
+   "hash": 3017643002,
+   "bucket": 3002
+  },
+  {
+   "input": "abcd",
+   "hash": 1139631978,
+   "bucket": 1978
+  },
+  {
+   "input": "abcde",
+   "hash": 3902511862,
+   "bucket": 1862
+  },
+  {
+   "input": "hello",
+   "hash": 613153351,
+   "bucket": 3351
+  },
+  {
+   "input": "Hello, world!",
+   "hash": 3224780355,
+   "bucket": 355
+  },
+  {
+   "input": "The quick brown fox jumps over the lazy dog",
+   "hash": 776992547,
+   "bucket": 2547
+  },
+  {
+   "input": "k3f9:new_checkout:user-42",
+   "hash": 3793223426,
+   "bucket": 3426
+  },
+  {
+   "input": "k3f9:v:new_checkout:user-42",
+   "hash": 1456514691,
+   "bucket": 4691
+  },
+  {
+   "input": "çğıöşü",
+   "hash": 3502147531,
+   "bucket": 7531
+  },
+  {
+   "input": "🚀🚀",
+   "hash": 1849651378,
+   "bucket": 1378
+  },
+  {
+   "input": "0",
+   "hash": 3530670207,
+   "bucket": 207
+  },
+  {
+   "input": "1017",
+   "hash": 4150539988,
+   "bucket": 9988
+  },
+  {
+   "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "hash": 2825860012,
+   "bucket": 12
+  },
+  {
+   "input": "salt:flag:0193f1a2-b3c4-7d5e-8a9b-0c1d2e3f4c01",
+   "hash": 3755051986,
+   "bucket": 1986
+  }
+ ]
+}

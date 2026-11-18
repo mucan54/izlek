@@ -1,0 +1,1312 @@
+{
+ "ruleset": {
+  "v": 31,
+  "flags": [
+   {
+    "key": "new_checkout",
+    "enabled": true,
+    "salt": "k3f9",
+    "rules": [
+     {
+      "when": {
+       "and": [
+        {
+         "prop": "platform",
+         "op": "eq",
+         "value": "ios"
+        },
+        {
+         "prop": "app_version",
+         "op": "semver_gte",
+         "value": "3.2.0"
+        }
+       ]
+      },
+      "rollout": 2500,
+      "variants": [
+       {
+        "key": "control",
+        "w": 5000
+       },
+       {
+        "key": "b",
+        "w": 5000
+       }
+      ]
+     }
+    ],
+    "default": null
+   },
+   {
+    "key": "everyone",
+    "enabled": true,
+    "salt": "s1",
+    "rules": [
+     {
+      "rollout": 10000
+     }
+    ],
+    "default": null
+   },
+   {
+    "key": "nobody",
+    "enabled": true,
+    "salt": "s2",
+    "rules": [
+     {
+      "rollout": 0
+     }
+    ],
+    "default": null
+   },
+   {
+    "key": "disabled_with_default",
+    "enabled": false,
+    "salt": "s3",
+    "rules": [
+     {
+      "rollout": 10000
+     }
+    ],
+    "default": "legacy"
+   },
+   {
+    "key": "half",
+    "enabled": true,
+    "salt": "h",
+    "rules": [
+     {
+      "rollout": 5000
+     }
+    ],
+    "default": false
+   },
+   {
+    "key": "sticky",
+    "enabled": true,
+    "salt": "st",
+    "rules": [
+     {
+      "rollout": 5000,
+      "stable_on": "anon_id",
+      "variants": [
+       {
+        "key": "a",
+        "w": 3333
+       },
+       {
+        "key": "b",
+        "w": 3333
+       },
+       {
+        "key": "c",
+        "w": 3334
+       }
+      ]
+     }
+    ],
+    "default": null
+   },
+   {
+    "key": "first_match_decides",
+    "enabled": true,
+    "salt": "fm",
+    "rules": [
+     {
+      "when": {
+       "prop": "plan",
+       "op": "eq",
+       "value": "pro"
+      },
+      "rollout": 0
+     },
+     {
+      "rollout": 10000
+     }
+    ],
+    "default": "fallback"
+   },
+   {
+    "key": "ops",
+    "enabled": true,
+    "salt": "o",
+    "rules": [
+     {
+      "when": {
+       "or": [
+        {
+         "prop": "age",
+         "op": "gte",
+         "value": 18
+        },
+        {
+         "prop": "country",
+         "op": "in",
+         "value": [
+          "TR",
+          "DE"
+         ]
+        },
+        {
+         "prop": "email",
+         "op": "regex",
+         "value": "@example\\.com$"
+        },
+        {
+         "not": {
+          "prop": "plan",
+          "op": "is_set"
+         }
+        }
+       ]
+      },
+      "rollout": 10000,
+      "variants": [
+       {
+        "key": "x",
+        "w": 10000
+       }
+      ]
+     }
+    ],
+    "default": null
+   },
+   {
+    "key": "ops2",
+    "enabled": true,
+    "salt": "o2",
+    "rules": [
+     {
+      "when": {
+       "and": [
+        {
+         "prop": "name",
+         "op": "contains",
+         "value": "ali"
+        },
+        {
+         "prop": "tier",
+         "op": "not_in",
+         "value": [
+          1,
+          2
+         ]
+        },
+        {
+         "prop": "score",
+         "op": "lt",
+         "value": "10.5"
+        },
+        {
+         "prop": "build",
+         "op": "ne",
+         "value": 7
+        },
+        {
+         "prop": "app_version",
+         "op": "semver_lt",
+         "value": "v4"
+        }
+       ]
+      },
+      "rollout": 10000
+     }
+    ],
+    "default": null
+   },
+   {
+    "key": "short_weights",
+    "enabled": true,
+    "salt": "sw",
+    "rules": [
+     {
+      "rollout": 10000,
+      "variants": [
+       {
+        "key": "only",
+        "w": 1
+       }
+      ]
+     }
+    ],
+    "default": null
+   },
+   {
+    "key": "empty_and",
+    "enabled": true,
+    "salt": "ea",
+    "rules": [
+     {
+      "when": {
+       "and": []
+      },
+      "rollout": 10000
+     }
+    ],
+    "default": null
+   },
+   {
+    "key": "empty_or",
+    "enabled": true,
+    "salt": "eo",
+    "rules": [
+     {
+      "when": {
+       "or": []
+      },
+      "rollout": 10000
+     }
+    ],
+    "default": "none-matched"
+   }
+  ]
+ },
+ "cases": [
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-0",
+   "anon_id": "anon-0",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-1",
+   "anon_id": "anon-1",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-2",
+   "anon_id": "anon-2",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-3",
+   "anon_id": "anon-3",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-4",
+   "anon_id": "anon-4",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-5",
+   "anon_id": "anon-5",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-6",
+   "anon_id": "anon-6",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-7",
+   "anon_id": "anon-7",
+   "expect": "control"
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-8",
+   "anon_id": "anon-8",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-9",
+   "anon_id": "anon-9",
+   "expect": "control"
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-10",
+   "anon_id": "anon-10",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-11",
+   "anon_id": "anon-11",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-12",
+   "anon_id": "anon-12",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-13",
+   "anon_id": "anon-13",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-14",
+   "anon_id": "anon-14",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-15",
+   "anon_id": "anon-15",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-16",
+   "anon_id": "anon-16",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-17",
+   "anon_id": "anon-17",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-18",
+   "anon_id": "anon-18",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-19",
+   "anon_id": "anon-19",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-20",
+   "anon_id": "anon-20",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-21",
+   "anon_id": "anon-21",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-22",
+   "anon_id": "anon-22",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-23",
+   "anon_id": "anon-23",
+   "expect": "b"
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "android",
+    "app_version": "3.2.0"
+   },
+   "user_id": "user-1",
+   "anon_id": "anon-1",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.1.9"
+   },
+   "user_id": "user-1",
+   "anon_id": "anon-1",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "3.10"
+   },
+   "user_id": "user-3",
+   "anon_id": "anon-3",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "v3.2.0-beta.1+7"
+   },
+   "user_id": "user-3",
+   "anon_id": "anon-3",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios",
+    "app_version": "garbage"
+   },
+   "user_id": "user-3",
+   "anon_id": "anon-3",
+   "expect": null
+  },
+  {
+   "flag": "new_checkout",
+   "props": {
+    "platform": "ios"
+   },
+   "user_id": "user-3",
+   "anon_id": "anon-3",
+   "expect": null
+  },
+  {
+   "flag": "everyone",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-9",
+   "expect": true
+  },
+  {
+   "flag": "nobody",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-9",
+   "expect": null
+  },
+  {
+   "flag": "disabled_with_default",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-9",
+   "expect": "legacy"
+  },
+  {
+   "flag": "empty_and",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-9",
+   "expect": true
+  },
+  {
+   "flag": "empty_or",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-9",
+   "expect": "none-matched"
+  },
+  {
+   "flag": "short_weights",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-9",
+   "expect": "only"
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-0",
+   "expect": null
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "user-0",
+   "anon_id": "anon-0",
+   "expect": null
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-1",
+   "expect": null
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "user-1",
+   "anon_id": "anon-1",
+   "expect": true
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-2",
+   "expect": null
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "user-2",
+   "anon_id": "anon-2",
+   "expect": null
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-3",
+   "expect": true
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "user-3",
+   "anon_id": "anon-3",
+   "expect": true
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-4",
+   "expect": true
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "user-4",
+   "anon_id": "anon-4",
+   "expect": true
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-5",
+   "expect": null
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "user-5",
+   "anon_id": "anon-5",
+   "expect": null
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-6",
+   "expect": null
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "user-6",
+   "anon_id": "anon-6",
+   "expect": null
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-7",
+   "expect": null
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "user-7",
+   "anon_id": "anon-7",
+   "expect": null
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-8",
+   "expect": true
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "user-8",
+   "anon_id": "anon-8",
+   "expect": true
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-9",
+   "expect": true
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "user-9",
+   "anon_id": "anon-9",
+   "expect": null
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-10",
+   "expect": null
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "user-10",
+   "anon_id": "anon-10",
+   "expect": null
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-11",
+   "expect": true
+  },
+  {
+   "flag": "half",
+   "props": {},
+   "user_id": "user-11",
+   "anon_id": "anon-11",
+   "expect": true
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-0",
+   "expect": null
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "someone-else",
+   "anon_id": "anon-0",
+   "expect": null
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-1",
+   "expect": "b"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "someone-else",
+   "anon_id": "anon-1",
+   "expect": "b"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-2",
+   "expect": "b"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "someone-else",
+   "anon_id": "anon-2",
+   "expect": "b"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-3",
+   "expect": "c"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "someone-else",
+   "anon_id": "anon-3",
+   "expect": "c"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-4",
+   "expect": "b"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "someone-else",
+   "anon_id": "anon-4",
+   "expect": "b"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-5",
+   "expect": "c"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "someone-else",
+   "anon_id": "anon-5",
+   "expect": "c"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-6",
+   "expect": null
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "someone-else",
+   "anon_id": "anon-6",
+   "expect": null
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-7",
+   "expect": "b"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "someone-else",
+   "anon_id": "anon-7",
+   "expect": "b"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-8",
+   "expect": "b"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "someone-else",
+   "anon_id": "anon-8",
+   "expect": "b"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-9",
+   "expect": "b"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "someone-else",
+   "anon_id": "anon-9",
+   "expect": "b"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-10",
+   "expect": null
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "someone-else",
+   "anon_id": "anon-10",
+   "expect": null
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "",
+   "anon_id": "anon-11",
+   "expect": "c"
+  },
+  {
+   "flag": "sticky",
+   "props": {},
+   "user_id": "someone-else",
+   "anon_id": "anon-11",
+   "expect": "c"
+  },
+  {
+   "flag": "first_match_decides",
+   "props": {
+    "plan": "pro"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": "fallback"
+  },
+  {
+   "flag": "first_match_decides",
+   "props": {
+    "plan": "free"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": true
+  },
+  {
+   "flag": "first_match_decides",
+   "props": {},
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": true
+  },
+  {
+   "flag": "ops",
+   "props": {
+    "age": 18,
+    "plan": "x"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": "x"
+  },
+  {
+   "flag": "ops",
+   "props": {
+    "age": "17",
+    "plan": "x"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops",
+   "props": {
+    "age": "18.0",
+    "plan": "x"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": "x"
+  },
+  {
+   "flag": "ops",
+   "props": {
+    "age": "abc",
+    "plan": "x"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops",
+   "props": {
+    "country": "TR",
+    "plan": "x"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": "x"
+  },
+  {
+   "flag": "ops",
+   "props": {
+    "country": "US",
+    "plan": "x"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops",
+   "props": {
+    "email": "a@example.com",
+    "plan": "x"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": "x"
+  },
+  {
+   "flag": "ops",
+   "props": {
+    "email": "a@example.com.tr",
+    "plan": "x"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops",
+   "props": {
+    "plan": "x"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops",
+   "props": {},
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": "x"
+  },
+  {
+   "flag": "ops",
+   "props": {
+    "plan": null
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": "x"
+  },
+  {
+   "flag": "ops",
+   "props": {
+    "age": true,
+    "plan": "x"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "tier": 3,
+    "score": 10,
+    "build": 8,
+    "app_version": "3.9.9"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": true
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "Ali",
+    "tier": 3,
+    "score": 10,
+    "build": 8,
+    "app_version": "3.9.9"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "tier": 2,
+    "score": 10,
+    "build": 8,
+    "app_version": "3.9.9"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "tier": "2",
+    "score": 10,
+    "build": 8,
+    "app_version": "3.9.9"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "tier": 2.0,
+    "score": 10,
+    "build": 8,
+    "app_version": "3.9.9"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "tier": 3,
+    "score": 10.5,
+    "build": 8,
+    "app_version": "3.9.9"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "tier": 3,
+    "score": "9.99",
+    "build": 8,
+    "app_version": "3.9.9"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": true
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "tier": 3,
+    "score": "1e1",
+    "build": 8,
+    "app_version": "3.9.9"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "tier": 3,
+    "score": 10,
+    "build": 7,
+    "app_version": "3.9.9"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "tier": 3,
+    "score": 10,
+    "build": "7",
+    "app_version": "3.9.9"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "tier": 3,
+    "score": 10,
+    "build": 7.5,
+    "app_version": "3.9.9"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": true
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "tier": 3,
+    "score": 10,
+    "build": 8,
+    "app_version": "4.0.0"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "tier": 3,
+    "score": 10,
+    "build": 8,
+    "app_version": "3"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": true
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "tier": 3,
+    "score": 10,
+    "build": 8,
+    "app_version": "3.9.9"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "score": 10,
+    "build": 8,
+    "app_version": "3.9.9"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": true
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "tier": 3,
+    "build": 8,
+    "app_version": "3.9.9"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "tier": 3,
+    "score": 10,
+    "app_version": "3.9.9"
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": true
+  },
+  {
+   "flag": "ops2",
+   "props": {
+    "name": "khalid alim",
+    "tier": 3,
+    "score": 10,
+    "build": 8
+   },
+   "user_id": "u",
+   "anon_id": "a",
+   "expect": null
+  }
+ ]
+}
