@@ -5,7 +5,7 @@
 **Sistem ne yapar (tasarım gereği).**
 - Ingestion **kabul etmeye devam eder**: segmentler yerel diskte birikir, yükleme üstel geri çekilmeyle sonsuza dek denenir. Yerel WAL `la_ingest_wal_local_limit_bytes` sınırına ulaşınca `/readyz` düşer ve istekler `503 + Retry-After` alır; SDK'lar kuyruklarını diskte tutar ve yeniden dener.
 - Shipper ve compactor tur atlar, depo dönünce kaldığı plandan devam eder (planlar idempotenttir).
-- Query önbellekteki dosyalarla yanıt verebildiği kadarını verir; soğuk okumalar hata döner.
+- Query **yanıt veremez**: her sorgu önce günlerin manifest'lerini listeler (10 sn'lik önbellek), bu yüzden diskte dosya önbelleği olsa da kesintide sorgular `500 internal` döner; depo hiç yanıt vermiyorsa sorgu zaman aşımına (`LA_QUERY_TIMEOUT_MS`) kadar bekler. UI'da grafikler hata gösterir. Depo dönünce kendiliğinden düzelir.
 - Control plane API'si çalışır (doğruluk kaynağı SQLite'tır); yayınlar arka planda yeniden denenir.
 
 **Doğrula.**
@@ -21,3 +21,5 @@
 - `wal_upload_lag_seconds` 0'a, `ship_lag_seconds` normale dönene kadar izleyin; birikmiş segmentler sırayla işlenir.
 - Kanaryanın `missing = 0`, `duplicates = 0` gösterdiğini doğrulayın.
 - Kesinti süresince `503` alan istemciler veriyi sonradan gönderir; `late` bayraklı event sayısı artabilir.
+
+**Tatbikat.** `node e2e/outage.mjs --seconds 600 [--mode fail|pause]` bu senaryoyu geliştirme S3 sunucusunun hata anahtarıyla otomatik koşar: kesinti boyunca istemciler göndermeye devam eder; sonunda onaylanan her event'in sorguda tam bir kez göründüğü ve ingestion'ın temiz kapandığı doğrulanır. Son sonuçlar `docs/status.md` §3'tedir. Bu tatbikat kendi yeniden deneme ve tamponlama mantığımızı sınar; gerçek sağlayıcının hata biçimlerini değil.

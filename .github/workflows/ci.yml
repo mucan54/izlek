@@ -13,8 +13,9 @@ permissions:
 
 env:
   # A real S3 implementation for the store contract tests: unlike the in-repo dev server it
-  # verifies SigV4 signatures and implements conditional writes itself.
-  MINIO_IMAGE: minio/minio:RELEASE.2025-04-22T22-12-26Z
+  # verifies SigV4 signatures and implements conditional writes itself. MinIO no longer
+  # publishes images of its own; this is the frozen Bitnami build of the 2025-07-23 release.
+  MINIO_IMAGE: bitnamilegacy/minio:2025.7.23-debian-12-r5
   MINIO_USER: izlek-ci
   MINIO_PASSWORD: izlek-ci-secret-key
   GOTOOLCHAIN: local
@@ -82,9 +83,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Start MinIO
         run: |
-          docker pull -q "$MINIO_IMAGE" || { docker pull -q minio/minio:latest && docker tag minio/minio:latest "$MINIO_IMAGE"; }
-          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER="$MINIO_USER" -e MINIO_ROOT_PASSWORD="$MINIO_PASSWORD" "$MINIO_IMAGE" server /data
-          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:9000/minio/health/live && break; sleep 1; done
+          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER="$MINIO_USER" -e MINIO_ROOT_PASSWORD="$MINIO_PASSWORD" "$MINIO_IMAGE"
+          for i in $(seq 1 60); do curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/live && break; sleep 1; done
+          curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/live || { docker logs minio; exit 1; }
           AWS_ACCESS_KEY_ID="$MINIO_USER" AWS_SECRET_ACCESS_KEY="$MINIO_PASSWORD" AWS_DEFAULT_REGION=us-east-1 \
             aws --endpoint-url http://127.0.0.1:9000 s3 mb s3://la-test
       - uses: actions/setup-go@v5
@@ -165,9 +166,9 @@ jobs:
           LA_E2E_GRADLE_ARGS: "-Pizlek.android=false"
       - name: Start MinIO
         run: |
-          docker pull -q "$MINIO_IMAGE" || { docker pull -q minio/minio:latest && docker tag minio/minio:latest "$MINIO_IMAGE"; }
-          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER="$MINIO_USER" -e MINIO_ROOT_PASSWORD="$MINIO_PASSWORD" "$MINIO_IMAGE" server /data
-          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:9000/minio/health/live && break; sleep 1; done
+          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER="$MINIO_USER" -e MINIO_ROOT_PASSWORD="$MINIO_PASSWORD" "$MINIO_IMAGE"
+          for i in $(seq 1 60); do curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/live && break; sleep 1; done
+          curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/live || { docker logs minio; exit 1; }
           AWS_ACCESS_KEY_ID="$MINIO_USER" AWS_SECRET_ACCESS_KEY="$MINIO_PASSWORD" AWS_DEFAULT_REGION=us-east-1 \
             aws --endpoint-url http://127.0.0.1:9000 s3 mb s3://la-test
       - name: End-to-end (MinIO)

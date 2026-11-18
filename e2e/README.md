@@ -18,6 +18,20 @@ node e2e/run.mjs --s3       # aynı senaryo, S3 protokolü üzerinden (golib/dev
 
 Seçenekler: `--skip-kmp`, `--skip-ui`, `--keep` (çalışma dizinini silme), `--verbose`. Rust binary'leri başka yerdeyse `LA_E2E_SHIPPER` / `LA_E2E_QUERY`; Gradle çevrimdışı çalışamıyorsa `LA_E2E_GRADLE_ARGS=""`. Tarayıcı için makinede kurulu Playwright kullanılır (depo bağımlılığı değildir). Başarısızlıkta servis loglarının sonu basılır ve çalışma dizini bırakılır.
 
+Gerçek bir S3 uygulamasına karşı (kova önceden oluşturulmuş olmalı; nesnelere `aws` CLI ile bakılır):
+
+```sh
+LA_E2E_S3_ENDPOINT=http://127.0.0.1:9000 LA_E2E_S3_BUCKET=la-test \
+LA_E2E_S3_ACCESS_KEY=… LA_E2E_S3_SECRET_KEY=… node e2e/run.mjs --s3
+```
+
+Depo kesintisi tatbikatı (ayrı betik; varsayılan 10 dakika):
+
+```sh
+node e2e/outage.mjs --seconds 600 --mode fail    # depo 503 döner
+node e2e/outage.mjs --seconds 600 --mode pause   # depo yanıt vermez
+```
+
 ## Doğrulananlar
 
 | Adım | Neyi kanıtlar |
@@ -40,4 +54,4 @@ Seçenekler: `--skip-kmp`, `--skip-ui`, `--keep` (çalışma dizinini silme), `-
 
 ## Kapsamadıkları
 
-Gerçek bir S3 sağlayıcısı (imza doğrulaması, koşullu yazma), birden çok ingestion node'u, yük ve dayanıklılık (çökme enjeksiyonu birim/entegrasyon testlerindedir), Android/iOS cihazları, resmi PostHog SDK'ları (`ingest/compat`, ayrı etiketli testler).
+Bulut sağlayıcısının kendi S3'ü (CI yalnızca MinIO'yu dener), birden çok ingestion node'u, yük ve dayanıklılık (çökme enjeksiyonu birim/entegrasyon testlerindedir), Android/iOS cihazları, resmi PostHog SDK'ları (`ingest/compat`, ayrı etiketli testler).

@@ -26,7 +26,7 @@ Bu belge tasarımın "production'a hazır olma listesi"ni (§21) ve "ölçülece
 
 Tek seferlik uzun koşular (CI'da değil): 400 tohumluk diferansiyel koşu (9 600 funnel, 2 400 retention, 3 200 trend karşılaştırması) hatasız; sorgu servisine bilerek eklenen 14 hatanın 14'ü diferansiyel paket tarafından yakalandı; her çözücü için ~30 sn'lik fuzz koşuları.
 
-CI: `.github/workflows/ci.yml` yukarıdaki adımların hepsini tanımlar. İş akışının GitHub üzerinde ilk koşusunun sonucu bu belgeye yazıldığı sırada bilinmiyordu.
+CI: `.github/workflows/ci.yml` yukarıdaki adımların hepsini tanımlar; ayrıca depo sözleşmesini ve uçtan uca testi imza doğrulayan gerçek bir S3 uygulamasına (MinIO) karşı koşar. Güncel sonuç için deponun Actions sekmesine bakın.
 
 ## 3. Ölçümler
 
@@ -41,6 +41,13 @@ CI: `.github/workflows/ci.yml` yukarıdaki adımların hepsini tanımlar. İş a
 | Funnel (6 M event, 3 adım, sıcak önbellek) | operatör 391 ms; aynı sonucu veren düz SQL 11 171 ms | `engine/query/README.md` |
 | Trend (günlük sayım, 6 M event) | kişi sıralı 61 ms; zaman sıralı kopya 60 ms | 〃 |
 | Kimlik yeniden yazımı (tüm dosyalar bayat) | funnel 403 → 726 ms (%5 kişi) → 1 538 ms (%20 kişi) | 〃 |
+
+Depo kesintisi tatbikatı (`node e2e/outage.mjs --seconds 600`, 50 event/sn, tek ingestion node'u):
+
+| Kip | Kesintide onaylanan event | Reddedilen istek | Onay p99 (önce → kesintide) | Yerel WAL tepe | Kesintide sorgular | Yetişme süresi | Sonuç |
+|---|---:|---:|---|---:|---|---:|---|
+| Depo `503` dönüyor | 28 960 | 0 | 9,7 → 8,3 ms | 4,9 MB | hepsi `500` | 15,2 sn | 29 675 / 29 675 görünür, çift yok |
+| Depo yanıt vermiyor | 29 920 | 0 | 9,8 → 8,0 ms | 4,9 MB | hepsi istemci zaman aşımı (30 sn) | 7,1 sn | 30 635 / 30 635 görünür, çift yok |
 
 Veri sentetiktir (küçük event'ler); gerçek veride `b` ve `w` farklı çıkar. Hiçbir ölçüm gerçek object storage ya da ayrı makinedeki yük üreteciyle yapılmadı.
 
@@ -69,8 +76,8 @@ Veri sentetiktir (küçük event'ler); gerçek veride `b` ve `w` farklı çıkar
 - [ ] Kanarya 14 gün kesintisiz — kanarya yazıldı; uzun süreli koşu yok
 
 **Dayanıklılık**
-- [~] Hata enjeksiyonu (§17.5): ingestion fsync↔yanıt arası çökme ✔ (entegrasyon testi), shipper adım adım çökme ✔, eşzamanlı manifest yazımı ✔, SDK süreç ölümü/kuyruk bozulması ✔ (JVM ve tarayıcıda). **Eksik:** 10 dakikalık depo kesintisi (yalnızca saniyeler süren hata penceresi test edildi), SDK'da disk dolu ve saat atlaması cihaz üzerinde
-- [ ] Object storage kesinti tatbikatı
+- [~] Hata enjeksiyonu (§17.5): ingestion fsync↔yanıt arası çökme ✔ (entegrasyon testi), shipper adım adım çökme ✔, eşzamanlı manifest yazımı ✔, 10 dakikalık depo kesintisi ✔ (aşağıda), SDK süreç ölümü/kuyruk bozulması ✔ (JVM ve tarayıcıda). **Eksik:** SDK'da disk dolu ve saat atlaması cihaz üzerinde
+- [~] Object storage kesinti tatbikatı — `e2e/outage.mjs` ile, **geliştirme S3 sunucusunun hata anahtarına karşı** iki kipte 10'ar dakika (§3'teki tablo). Gerçek sağlayıcının hata biçimleri (kısmi hatalar, yavaşlama, DNS) denenmedi
 - [ ] `data/` yeniden inşa tatbikatı (komut ve testleri var; gerçek hacimde süre ölçülmedi)
 - [ ] Control DB geri yükleme tatbikatı (`backup` komutu ve testi var)
 
