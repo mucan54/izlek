@@ -520,7 +520,7 @@ impl<'a> Merger<'a> {
                 self.finalize_moved()?;
                 continue;
             };
-            let (row, batch) = (self.cursors[top].row, self.cursors[top].batch);
+            let row = self.cursors[top].row;
             if !self.moved_done && self.cursors[top].cols.pk.value(row).as_bytes() >= ANON_RANGE_END {
                 self.finalize_moved()?;
                 continue;
@@ -578,7 +578,8 @@ impl<'a> Merger<'a> {
                 out.min_ts = out.min_ts.min(ts);
                 out.max_ts = out.max_ts.max(ts);
                 self.stats.rows_out += 1;
-                self.pending.push((batch, row));
+                // Read the batch slot only now: closing a file above re-numbers the live batches.
+                self.pending.push((self.cursors[top].batch, row));
             }
             self.last = Some((ts, uuid));
 
@@ -848,5 +849,12 @@ mod tests {
             assert!(rows.iter().all(|r| matches!(r.promoted[0], Some(Cell::Int(_))) && r.props == "{}"));
         }
         assert_eq!(total, 3000);
+        // Rotating files must not disturb which rows are written.
+        let mut seen: Vec<u16> = parts.iter().flatten().map(|r| u16::from_be_bytes([r.uuid[0], r.uuid[1]])).collect();
+        seen.sort_unstable();
+        assert_eq!(seen, (0..3000u16).collect::<Vec<_>>());
+        for rows in &parts {
+            assert!(rows.windows(2).all(|w| w[0].sort_key_cmp(&w[1]).is_lt()));
+        }
     }
 }

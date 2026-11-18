@@ -162,3 +162,5 @@ edilemediği için tam kareye düşülür.
 - 401/403 sonrası 1 saatlik duraklama süreç yeniden başlayınca sıfırlanır.
 - Android'de arka plan gönderimi için ek süre istenmez (WorkManager bağımlılığı alınmadı).
 - Compose semantics ağacı renk ve semantics'i olmayan öğeleri (düz `Box`, dekoratif görsel) vermez (design §19 #7).
+- Compose Multiplatform'da iOS/masaüstü için `SemanticsOwner`'a ulaşmanın herkese açık bir API'si yok; `SemanticsOwnerTreeSource` sahibi dışarıdan ister. Android'de `RootForTest` üzerinden alınır.
+- Yayınlama (`maven-publish`) yapılandırması ve iOS framework/XCFramework paketlemesi yoktur.

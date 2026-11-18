@@ -231,3 +231,76 @@ pub async fn engine_with(store: &Store, cfg: Config) -> Arc<Engine> {
     e.refresh_control().await.unwrap();
     e
 }
+
+// ---------------------------------------------------------------------------
+// HTTP helpers
+// ---------------------------------------------------------------------------
+
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use http_body_util::BodyExt;
+use la_query::service::Service;
+use serde_json::Value;
+use tower::ServiceExt;
+
+pub struct App {
+    pub svc: Arc<Service>,
+    pub router: axum::Router,
+}
+
+pub async fn app(store: &Store) -> App {
+    app_with(store, test_config()).await
+}
+
+pub async fn app_with(store: &Store, cfg: Config) -> App {
+    let engine = engine_with(store, cfg).await;
+    let svc = Service::new(engine);
+    App { router: la_query::http::router(Arc::clone(&svc)), svc }
+}
+
+pub struct Reply {
+    pub status: StatusCode,
+    pub headers: axum::http::HeaderMap,
+    pub bytes: Vec<u8>,
+}
+
+impl Reply {
+    pub fn json(&self) -> Value {
+        serde_json::from_slice(&self.bytes).unwrap_or_else(|e| panic!("not JSON ({e}): {:?}", String::from_utf8_lossy(&self.bytes)))
+    }
+    pub fn code(&self) -> String {
+        self.json()["error"]["code"].as_str().unwrap_or_default().to_owned()
+    }
+}
+
+impl App {
+    pub async fn send(&self, req: Request<Body>) -> Reply {
+        let resp = self.router.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes().to_vec();
+        Reply { status, headers, bytes }
+    }
+
+    /// `POST path` with a bearer key and a JSON body.
+    pub async fn post(&self, key: &str, path: &str, body: Value) -> Reply {
+        let req = Request::post(path)
+            .header("authorization", format!("Bearer {key}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        self.send(req).await
+    }
+
+    /// Like [`post`] but asserts `200` and returns the body.
+    pub async fn ok(&self, key: &str, path: &str, body: Value) -> Value {
+        let r = self.post(key, path, body).await;
+        assert_eq!(r.status, StatusCode::OK, "{path}: {}", String::from_utf8_lossy(&r.bytes));
+        r.json()
+    }
+
+    pub async fn get(&self, key: &str, path_and_query: &str) -> Reply {
+        let req = Request::get(path_and_query).header("authorization", format!("Bearer {key}")).body(Body::empty()).unwrap();
+        self.send(req).await
+    }
+}

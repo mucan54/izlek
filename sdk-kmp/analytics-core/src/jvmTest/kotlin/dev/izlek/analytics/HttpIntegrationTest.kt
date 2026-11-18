@@ -203,6 +203,21 @@ class HttpIntegrationTest {
         }
     }
 
+    /** Design §4.10: the caller-thread cost of `capture` (encode + hand-off) stays below 50 µs. */
+    @Test
+    fun captureIsCheapOnTheCallingThread() = runBlocking {
+        val config = Config(token = "pk_perf", host = "http://127.0.0.1:1", flushIntervalMs = 0, captureLifecycle = false)
+        Analytics.setup(config, PlatformContext(storageDir = tempDir()))
+        val props = mapOf("screen" to "Home", "count" to 3, "ratio" to 0.5, "ok" to true, "items" to listOf(1, 2, 3), "plan" to "pro")
+        repeat(10_000) { Analytics.capture("warmup", props) }
+        val n = 20_000
+        val start = System.nanoTime()
+        repeat(n) { Analytics.capture("perf", props) }
+        val averageMicros = (System.nanoTime() - start) / 1_000.0 / n
+        println("capture(): average caller-thread cost %.2f µs over %d calls".format(averageMicros, n))
+        assertTrue(averageMicros < 50.0, "average cost of capture() on the caller thread: $averageMicros µs")
+    }
+
     @Test
     fun platformHttpFunctions() = runBlocking {
         assertEquals(200, httpPost("$host/v1/e", mapOf("Authorization" to "Bearer x"), byteArrayOf(1, 2, 3)))

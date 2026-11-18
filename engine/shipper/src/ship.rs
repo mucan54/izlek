@@ -92,11 +92,16 @@ impl ShardWorker {
             .filter(|o| segment_belongs(shards, &self.shardkey, &o.key))
             .filter(|o| keys::segment_name(&o.key).is_some_and(|n| !self.done.contains(n)))
             .collect();
-        let labels = [("shard", self.shardkey.as_str())];
-        ctx.metrics.set("segments_pending", &labels, pending.len() as f64);
-        let oldest = pending.iter().map(|o| o.last_modified_ms).min();
-        let lag = oldest.map(|t| (la_core::time::now_ms() - t).max(0) as f64 / 1000.0).unwrap_or(0.0);
-        ctx.metrics.set("ship_lag_seconds", &labels, lag);
+        let shardkey = self.shardkey.clone();
+        let report_backlog = |waiting: &[&ObjInfo]| {
+            let labels = [("shard", shardkey.as_str())];
+            ctx.metrics.set("segments_pending", &labels, waiting.len() as f64);
+            // Age of the oldest segment not shipped yet (0 when caught up).
+            let oldest = waiting.iter().map(|o| o.last_modified_ms).min();
+            let lag = oldest.map(|t| (la_core::time::now_ms() - t).max(0) as f64 / 1000.0).unwrap_or(0.0);
+            ctx.metrics.set("ship_lag_seconds", &labels, lag);
+        };
+        report_backlog(&pending);
         if pending.is_empty() {
             return Ok(Tick::Idle);
         }
@@ -141,6 +146,7 @@ impl ShardWorker {
             }
         };
         self.done.extend(plan.segments.iter().filter_map(|s| keys::segment_name(s)).map(str::to_owned));
+        report_backlog(&pending[plan.segments.len()..]);
         if out.compressed_bytes > 0 {
             let seen = out.decompressed_bytes as f64 / out.compressed_bytes as f64;
             self.ratio = (0.7 * self.ratio + 0.3 * seen).clamp(1.0, 100.0);

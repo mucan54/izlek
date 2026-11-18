@@ -18,8 +18,8 @@ test('niceAxis covers the data with round ticks and includes zero', () => {
   assert.deepEqual(niceAxis(0, 100).ticks, [0, 20, 40, 60, 80, 100], 'a max on a tick does not add another one')
   assert.deepEqual(niceAxis(-12, 30).ticks, [-20, -10, 0, 10, 20, 30])
   const a = niceAxis(0, 14321)
-  assert.deepEqual([a.min, a.max, a.step], [0, 15000, 2500])
-  assert.ok(a.ticks.every((t) => t % 2500 == 0))
+  assert.deepEqual([a.min, a.max, a.step], [0, 15000, 5000])
+  assert.deepEqual(a.ticks, [0, 5000, 10000, 15000])
 })
 
 test('niceAxis edge cases: empty, flat, fractional, integer-only', () => {

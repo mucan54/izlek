@@ -72,6 +72,8 @@ public class ReplayRecorder(
     private var lastMoveMono = Long.MIN_VALUE
 
     // upload state
+    /** Sizes of the spooled files, so that the size limit does not need to re-read them. */
+    private val spoolSizes = HashMap<String, Int>()
     private var uploading = false
     private var disabled = false
     private var failures = 0
@@ -83,6 +85,7 @@ public class ReplayRecorder(
         job = core.scope.launch {
             try {
                 core.deps.fs.mkdirs(dir)
+                for (name in spoolFiles()) spoolSizes[name] = core.deps.fs.readBytes("$dir/$name")?.size ?: 0
             } catch (e: Exception) {
                 // spooling will fail and chunks will be dropped; recording itself still works
             }
@@ -271,7 +274,9 @@ public class ReplayRecorder(
             file.bytes(gz)
             val state = linkedMapOf<String, Any?>("session" to c.session, "next_seq" to nextSeq)
             core.deps.fs.writeAtomic("$dir/$STATE_FILE", Json.write(state).encodeToByteArray())
-            core.deps.fs.writeAtomic("$dir/${spoolName(c.session, c.seq)}", file.toByteArray())
+            val name = spoolName(c.session, c.seq)
+            core.deps.fs.writeAtomic("$dir/$name", file.toByteArray())
+            spoolSizes[name] = file.size
         } catch (t: Throwable) {
             stats.chunksDropped++
             return
@@ -280,10 +285,15 @@ public class ReplayRecorder(
         pumpUpload()
     }
 
+    private fun deleteSpooled(name: String) {
+        core.deps.fs.delete("$dir/$name")
+        spoolSizes.remove(name)
+    }
+
     private fun wipeSpool() {
         for (f in spoolFiles()) {
             try {
-                core.deps.fs.delete("$dir/$f")
+                deleteSpooled(f)
                 stats.chunksDropped++
             } catch (e: Exception) {
                 // retried on the next tick
@@ -297,15 +307,16 @@ public class ReplayRecorder(
         emptyList()
     }
 
+    /** Drops the oldest chunks while the spool is larger than [ReplayConfig.maxSpoolBytes]. */
     private fun enforceSpoolLimit() {
         try {
-            val files = spoolFiles().map { it to (core.deps.fs.readBytes("$dir/$it")?.size ?: 0) }
-            var total = files.sumOf { it.second.toLong() }
-            for ((name, size) in files) {
+            var total = spoolSizes.values.sumOf { it.toLong() }
+            if (total <= config.maxSpoolBytes) return
+            for (name in spoolFiles()) {
                 if (total <= config.maxSpoolBytes) break
-                core.deps.fs.delete("$dir/$name")
+                total -= spoolSizes[name] ?: 0
+                deleteSpooled(name)
                 stats.chunksDropped++
-                total -= size
             }
         } catch (e: Exception) {
             // try again when the next chunk is closed
@@ -363,7 +374,7 @@ public class ReplayRecorder(
             val bytes = core.deps.fs.readBytes(path)
             val parsed = bytes?.let { parseSpool(name, it) }
             if (parsed == null) {
-                core.deps.fs.delete(path)
+                deleteSpooled(name)
                 stats.chunksDropped++
                 continue
             }
@@ -376,12 +387,12 @@ public class ReplayRecorder(
             }
             when {
                 status == 200 -> {
-                    core.deps.fs.delete(path)
+                    deleteSpooled(name)
                     failures = 0
                     stats.chunksUploaded++
                 }
                 status == 400 || status == 413 -> {
-                    core.deps.fs.delete(path)
+                    deleteSpooled(name)
                     stats.chunksDropped++
                 }
                 status == 401 || status == 403 -> {
@@ -389,7 +400,7 @@ public class ReplayRecorder(
                     // stop recording for this process and drop what was spooled.
                     disabled = true
                     for (f in spoolFiles()) {
-                        core.deps.fs.delete("$dir/$f")
+                        deleteSpooled(f)
                         stats.chunksDropped++
                     }
                 }
