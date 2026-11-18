@@ -55,6 +55,11 @@ async fn process_project(
     let store = &ctx.store;
     let mut report = ProjectReport::default();
 
+    if pcfg.closed {
+        report.gc_deleted = gc::purge_project(ctx, project).await?;
+        return Ok(report);
+    }
+
     // Retention first: no point compacting what is about to go.
     let mut days = manifest::list_days(store, project).await?;
     let expired = gc::apply_retention(ctx, project, pcfg, &days, now_ms).await?;

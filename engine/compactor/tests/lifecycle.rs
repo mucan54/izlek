@@ -203,3 +203,46 @@ async fn wal_lifecycle_keeps_the_highest_plan() {
     assert!(all_keys(&store, "wal/_done").await.is_empty());
     assert_eq!(all_keys(&store, "wal/_plan").await.len(), 2, "the highest plan is never removed");
 }
+
+/// `closed: true` (not `retention_days: 0`, which keeps everything) removes
+/// all state of a project and nothing of its neighbours.
+#[tokio::test]
+async fn closed_project_is_purged() {
+    let store = Store::memory();
+    for pid in [7, 70] {
+        add_l0(&store, pid, DAY, 1, vec![row(1, "u:a", "d", t0())]).await;
+        add_l0(&store, pid, "2026-11-01", 2, vec![row(2, "u:a", "d", 1)]).await;
+        for key in [
+            format!("replay/p={pid}/d=2026-11-10/aa/000000.bin.zst"),
+            format!("identity/p={pid}/map-c00000001.parquet"),
+            format!("identity/p={pid}/_m/00000001.json"),
+            format!("persons/p={pid}/props-c00000001.parquet"),
+            format!("tombstones/p={pid}/00000001.json"),
+            keys::project_schema(pid),
+        ] {
+            store.put(&key, &b"{}"[..]).await.unwrap();
+        }
+    }
+    let before_70: Vec<String> = all_keys(&store, "").await.into_iter().filter(|k| k.contains("p=70")).collect();
+    assert!(before_70.len() >= 10);
+    store
+        .put(keys::PROJECTS, &br#"{"version":3,"projects":{"7":{"retention_days":0,"closed":true},"70":{}}}"#[..])
+        .await
+        .unwrap();
+    let c = ctx(&store);
+    let all = |_: u32| true;
+    // Even a hot-only cycle deletes: closing is an explicit request.
+    let r = run::cycle(&c, open_now(), false, false, &all).await.unwrap();
+    assert_eq!(r.errors, 0);
+    assert!(r.gc_deleted >= 10, "{r:?}");
+    let left = all_keys(&store, "").await;
+    let of_7: Vec<&String> = left.iter().filter(|k| k.contains("p=7/") || k.ends_with("p=7.json")).collect();
+    assert!(of_7.is_empty(), "{of_7:?}");
+    let after_70: Vec<String> = left.into_iter().filter(|k| k.contains("p=70")).collect();
+    assert_eq!(after_70, before_70);
+    assert_eq!(c.metrics.counter_value("projects_purged_total", &[]), 1);
+
+    // Nothing left to find: the next cycle is a no-op for the closed project.
+    let r = run::cycle(&c, open_now(), true, false, &all).await.unwrap();
+    assert_eq!(r.projects, 1);
+}

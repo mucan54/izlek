@@ -496,6 +496,20 @@ async fn project_config_drop_keys_unknown_projects_and_bots() {
     c2.cfg.unknown_projects = la_shipper::config::UnknownProjects::Accept;
     ship_once(&c2).await.unwrap();
     assert_eq!(manifest::list_projects(&store2).await.unwrap(), [7, 8]);
+
+    // A closed project is refused even with `accept`: its data is being deleted.
+    let store3 = Store::memory();
+    store3
+        .put(keys::PROJECTS, &br#"{"version":2,"projects":{"7":{"closed":true,"retention_days":0},"8":{}}}"#[..])
+        .await
+        .unwrap();
+    put_segment(&store3, &seg_key(10, "n", 1), &entries).await;
+    let mut c3 = ctx(&store3);
+    c3.cfg.unknown_projects = la_shipper::config::UnknownProjects::Accept;
+    ship_once(&c3).await.unwrap();
+    assert_eq!(manifest::list_projects(&store3).await.unwrap(), [8]);
+    assert!(store3.list("identity/p=7").await.unwrap().is_empty());
+    assert!(store3.list("persons/p=7").await.unwrap().is_empty());
 }
 
 /// Rows of deleted people never reach an L0 file, and the manifest only

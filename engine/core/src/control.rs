@@ -32,6 +32,11 @@ pub struct ProjectConfig {
     pub scan_limit_bytes: u64,
     #[serde(default = "d_concurrency")]
     pub max_concurrent_queries: u32,
+    /// The project was closed in the control plane: its data is to be
+    /// deleted and nothing new may be written for it. This flag, not
+    /// `retention_days == 0` (which means "keep forever"), carries that.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub closed: bool,
 }
 
 impl Default for ProjectConfig {
@@ -43,6 +48,7 @@ impl Default for ProjectConfig {
             drop_keys: Vec::new(),
             scan_limit_bytes: 0,
             max_concurrent_queries: d_concurrency(),
+            closed: false,
         }
     }
 }
@@ -68,6 +74,10 @@ impl Projects {
     /// published it (data-plane components must keep working without it).
     pub fn get_or_default(&self, project: u32) -> ProjectConfig {
         self.get(project).cloned().unwrap_or_default()
+    }
+
+    pub fn is_closed(&self, project: u32) -> bool {
+        self.get(project).is_some_and(|p| p.closed)
     }
 
     pub fn ids(&self) -> Vec<u32> {

@@ -223,6 +223,17 @@ Kira yalnızca **boşa işi** önler; doğruluk plan/manifest protokolüne dayan
     "scan_limit_bytes": 0, "max_concurrent_queries": 4 } } }
 ```
 
+`retention_days: 0` ve `replay_retention_days: 0` **"sonsuza kadar sakla"** demektir. Kapatılan proje ayrıca
+`"closed": true` taşır (alan yoksa `false`); anlamı:
+
+- **shipper / rebuild**: projenin kayıtlarını yazmaz (`unknown_project` gibi reddedilir).
+- **compactor**: her turda projenin `data/`, `replay/`, `identity/`, `persons/`, `tombstones/` önekleri ile şema
+  dosyasını siler (önce manifest'ler). WAL segmentleri projeler arası ortaktır; içlerindeki kayıtlar WAL saklama
+  süresi (`LA_WAL_RETENTION_DAYS`, varsayılan 30 gün) dolunca gider.
+- **query**: proje için `403 forbidden` döner.
+
+Kapatma geri alınamaz: `closed` kaldırılsa bile silinen veri yalnızca WAL'da kalan kısımdan `rebuild` ile geri gelir.
+
 `control/shards.json`:
 
 ```json

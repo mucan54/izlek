@@ -316,7 +316,7 @@ pub async fn rebuild(ctx: &ShipCtx, cctx: &la_compactor::Ctx, opts: &RebuildOpti
                 if !shipped_for(shard_of(project, map.shards)) {
                     continue;
                 }
-                if reject_unknown && projects.get(project).is_none() {
+                if projects.is_closed(project) || (reject_unknown && projects.get(project).is_none()) {
                     continue;
                 }
                 let dk = drop_keys.entry(project).or_insert_with(|| {

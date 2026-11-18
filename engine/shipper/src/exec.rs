@@ -255,7 +255,9 @@ impl ProjectGate {
     }
 
     fn accepts(&self, project: u32) -> bool {
-        project != 0 && !(self.reject_unknown && self.projects.get(project).is_none())
+        project != 0
+            && !self.projects.is_closed(project)
+            && !(self.reject_unknown && self.projects.get(project).is_none())
     }
 
     fn drop_keys(&mut self, project: u32) -> &HashSet<String> {

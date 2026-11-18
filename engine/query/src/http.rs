@@ -43,6 +43,15 @@ fn same_secret(a: &str, b: &str) -> bool {
 /// from the secret key or from the internal header pair — never from the
 /// request body or query string.
 pub fn authenticate(engine: &Engine, headers: &HeaderMap) -> ApiResult<u32> {
+    let project = credentials(engine, headers)?;
+    // A closed project's data is being deleted; never serve half of it.
+    if engine.project_config(project).closed {
+        return Err(ApiError::forbidden("project is closed"));
+    }
+    Ok(project)
+}
+
+fn credentials(engine: &Engine, headers: &HeaderMap) -> ApiResult<u32> {
     if let Some(presented) = headers.get(H_INTERNAL) {
         // Presenting the internal header commits the request to that path:
         // a wrong or unconfigured secret is never silently ignored.

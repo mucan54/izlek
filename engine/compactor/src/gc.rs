@@ -117,6 +117,33 @@ async fn delete_prefix(ctx: &Ctx, prefix: &str, manifests_first: bool) -> Result
     Ok(n)
 }
 
+/// Removes everything stored for a closed project: event days (manifests
+/// first), replay chunks, identity and person tables, schema and tombstones.
+/// WAL segments are shared between projects and go with the WAL lifecycle.
+/// Safe to repeat; a crash half-way is finished by the next cycle.
+pub async fn purge_project(ctx: &Ctx, project: u32) -> Result<u64> {
+    let mut deleted = delete_prefix(ctx, &keys::data_project_prefix(project), true).await?;
+    for prefix in [
+        keys::replay_project_prefix(project),
+        format!("identity/p={project}/"),
+        format!("persons/p={project}/"),
+        keys::tombstone_prefix(project),
+    ] {
+        deleted += delete_prefix(ctx, &prefix, false).await?;
+    }
+    let schema = keys::project_schema(project);
+    if ctx.store.exists(&schema).await? {
+        ctx.store.delete(&schema).await?;
+        deleted += 1;
+    }
+    if deleted > 0 {
+        ctx.metrics.inc("gc_deleted_total", &[], deleted);
+        ctx.metrics.inc("projects_purged_total", &[], 1);
+        tracing::info!(project, objects = deleted, "closed project removed");
+    }
+    Ok(deleted)
+}
+
 /// Deletes every day directory of `project` older than its retention.
 /// Returns the days removed.
 pub async fn apply_retention(
