@@ -79,7 +79,8 @@ groups:
           summary: "Bir proje-günde 64'ten fazla L0 dosyası birikti"
           runbook: docs/runbooks/shipper-lag.md
       - alert: TombstonesOverdue
-        expr: la_compactor_tombstones_oldest_pending_seconds > 7 * 86400
+        expr: la_compactor_tombstones_pending > 0
+        for: 7d
         labels: { severity: page }
         annotations:
           summary: "Silme isteği 7 günlük yeniden yazım süresini aştı"
