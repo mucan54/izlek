@@ -1,0 +1,54 @@
+[workspace]
+resolver = "2"
+members = ["codec", "core", "shipper", "compactor", "query", "difftest"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.94"
+license = "Apache-2.0"
+publish = false
+
+# Versions are pinned to what DataFusion 55 resolves against (arrow/parquet 59,
+# object_store 0.13) so the whole workspace shares one Arrow.
+[workspace.dependencies]
+la-codec = { path = "codec" }
+la-core = { path = "core" }
+
+arrow = { version = "59", default-features = false, features = ["prettyprint"] }
+parquet = { version = "59", default-features = false, features = ["arrow", "async", "zstd", "object_store"] }
+object_store = { version = "0.13", features = ["aws", "fs"] }
+datafusion = { version = "55.3", default-features = false, features = [
+    "parquet", "sql", "nested_expressions", "datetime_expressions", "string_expressions",
+    "unicode_expressions", "regex_expressions", "encoding_expressions", "recursive_protection",
+] }
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "fs", "net"] }
+futures = "0.3"
+async-trait = "0.1"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+thiserror = "2"
+anyhow = "1"
+sha2 = "0.10"
+crc32c = "0.6"
+zstd = "0.13"
+url = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+rand = "0.9"
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+debug = 1
+
+[profile.dev]
+debug = 1
+
+[profile.dev.package."*"]
+opt-level = 2

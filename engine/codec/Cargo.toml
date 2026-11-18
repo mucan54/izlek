@@ -1,0 +1,17 @@
+[package]
+name = "la-codec"
+description = "LA1 wire format, LAW1 WAL segments, clock correction and id helpers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+sha2.workspace = true
+crc32c.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true
