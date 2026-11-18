@@ -1,0 +1,27 @@
+{
+  "name": "@izlek/ui",
+  "version": "0.1.0",
+  "description": "Izlek dashboard: single-page app served by the control plane",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node scripts/dev.mjs",
+    "mock": "node mock/server.mjs",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node scripts/unit.mjs",
+    "test:e2e": "node test/e2e/run.mjs",
+    "test": "npm run typecheck && npm run build && npm run test:unit && npm run test:e2e"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "preact": "^10.29.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}

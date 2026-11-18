@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <title>izlek smoke</title>
+    <style>
+      body { margin: 0; font: 16px/1.4 sans-serif; background: #ffffff; color: #111111; }
+      .card { background: #eeeeff; margin: 16px; padding: 16px; border: 1px solid #8888cc; }
+      input { display: block; margin: 8px 0; width: 240px; }
+      #fixed { position: fixed; top: 0; right: 0; padding: 4px 8px; background: #222222; color: #ffffff; }
+      #tall { height: 3000px; }
+      #hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <h1 id="title">Merhaba dünya</h1>
+    <div class="card">
+      <input id="name" type="text" placeholder="Adınız" />
+      <input id="pw" type="password" data-la-unmask />
+      <input id="public" type="text" value="herkese açık" data-la-unmask />
+      <p id="secret" data-la-mask>çok gizli metin</p>
+      <p id="hidden">görünmez metin</p>
+      <img id="logo" width="120" height="60" alt="alt text must not leak" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" />
+      <button id="buy" data-track="buy_click" data-track-plan="pro">Satın al</button>
+      <a id="nav" href="/pricing">Fiyatlar</a>
+    </div>
+    <div id="fixed">sabit</div>
+    <div id="tall"></div>
+
+    <script src="/dist/izlek.min.js"></script>
+    <script src="/dist/izlek-flags.min.js"></script>
+    <script src="/dist/izlek-replay.min.js"></script>
+    <script>
+      const q = new URLSearchParams(location.search)
+      // a client-side router in two lines
+      document.getElementById('nav').addEventListener('click', (e) => {
+        e.preventDefault()
+        history.pushState({}, '', '/pricing')
+        document.getElementById('title').textContent = 'Fiyatlar'
+      })
+      izlek.init({ token: 'pk_smoke', host: q.get('host'), flushIntervalMs: +q.get('interval') || 200 })
+      window.flagsReady = izlekFlags.initFlags()
+      if (q.get('replay')) izlekReplay.startReplay()
+    </script>
+  </body>
+</html>

@@ -1,0 +1,49 @@
+{
+  "name": "@izlek/web",
+  "version": "0.1.0",
+  "description": "Izlek web SDK: tiny zero-dependency product analytics client (events, feature flags, wireframe session replay)",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./flags": {
+      "types": "./dist/types/flags.d.ts",
+      "default": "./dist/flags.js"
+    },
+    "./replay": {
+      "types": "./dist/types/replay.d.ts",
+      "default": "./dist/replay.js"
+    },
+    "./replay-decode": {
+      "types": "./dist/types/replay-decode.d.ts",
+      "default": "./dist/replay-decode.js"
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "types": "tsc --emitDeclarationOnly --declaration --outDir dist/types",
+    "test:unit": "node --test test/*.test.mjs",
+    "test:browser": "node test/browser/smoke.mjs",
+    "size": "node scripts/size.mjs",
+    "test": "npm run typecheck && npm run build && npm run test:unit && npm run test:browser && npm run size"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}

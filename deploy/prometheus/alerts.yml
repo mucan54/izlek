@@ -1,0 +1,136 @@
+# Alarm kuralları — docs/design.md §16.4. Eşikler başlangıç değerleridir.
+groups:
+  - name: la-ingestion
+    rules:
+      - alert: WalUploadLag
+        expr: la_ingest_wal_upload_lag_seconds > 120
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "Ingestion segmentleri object storage'a yüklenemiyor ({{ $labels.instance }})"
+          runbook: docs/runbooks/object-storage-outage.md
+      - alert: WalDiskHalfFull
+        expr: la_ingest_wal_local_bytes / la_ingest_wal_max_local_bytes > 0.5
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: "Yerel WAL, geri basınç sınırının yarısını geçti ({{ $labels.instance }})"
+          runbook: docs/runbooks/ingestion-disk-full.md
+      - alert: Ingest5xxRate
+        expr: |
+          sum(rate(la_ingest_requests_total{code=~"5.."}[5m]))
+            / clamp_min(sum(rate(la_ingest_requests_total[5m])), 1) > 0.01
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "Ingestion 5xx oranı %1'in üzerinde"
+          runbook: docs/runbooks/object-storage-outage.md
+      - alert: TokensStale
+        expr: la_ingest_tokens_age_seconds > 600
+        for: 1m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Token kaydı 10 dakikadır yenilenemiyor ({{ $labels.instance }})"
+          runbook: docs/runbooks/token-leak.md
+      - alert: AckLatencyP99
+        expr: histogram_quantile(0.99, sum by (le) (rate(la_ingest_request_seconds_bucket[5m]))) > 0.05
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Onay gecikmesi p99 hedefin (50 ms) üzerinde"
+
+  - name: la-shipper
+    rules:
+      - alert: ShipLag
+        expr: la_shipper_ship_lag_seconds > 300
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "Shipper gecikmesi 5 dakikayı aştı (shard {{ $labels.shard }})"
+          runbook: docs/runbooks/shipper-lag.md
+      - alert: ShardWithoutShipper
+        expr: max by (shard) (la_shipper_lease_held) == 0
+        for: 3m
+        labels: { severity: page }
+        annotations:
+          summary: "Shard {{ $labels.shard }} için kira tutan shipper yok"
+          runbook: docs/runbooks/shipper-lag.md
+      - alert: ManifestConflictStorm
+        expr: sum(rate(la_shipper_manifest_conflicts_total[5m])) + sum(rate(la_compactor_manifest_conflicts_total[5m])) > 5
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Manifest çakışmaları olağandışı yüksek"
+          runbook: docs/runbooks/manifest-conflict-storm.md
+      - alert: SegmentQuarantined
+        expr: increase(la_shipper_segments_quarantined_total[1h]) > 0
+        labels: { severity: ticket }
+        annotations:
+          summary: "Bozuk WAL segmenti karantinaya alındı"
+          runbook: docs/runbooks/corrupt-segment.md
+
+  - name: la-compactor
+    rules:
+      - alert: L0Backlog
+        expr: max(la_compactor_l0_files) > 64
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Bir proje-günde 64'ten fazla L0 dosyası birikti"
+          runbook: docs/runbooks/shipper-lag.md
+      - alert: TombstonesOverdue
+        expr: la_compactor_tombstones_oldest_pending_seconds > 7 * 86400
+        labels: { severity: page }
+        annotations:
+          summary: "Silme isteği 7 günlük yeniden yazım süresini aştı"
+          runbook: docs/runbooks/deletion-requests.md
+
+  - name: la-canary
+    rules:
+      - alert: CanaryLossOrDuplicate
+        expr: la_canary_missing > 0 or la_canary_duplicates > 0
+        for: 1m
+        labels: { severity: page }
+        annotations:
+          summary: "Kanarya eksik ({{ $value }}) ya da çift kayıt gördü"
+          runbook: docs/runbooks/canary-alarm.md
+      - alert: CanaryNotVerifying
+        expr: time() - la_canary_last_verify_timestamp_seconds > 600
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "Kanarya 10 dakikadır doğrulama yapamıyor"
+          runbook: docs/runbooks/canary-alarm.md
+      - alert: FreshnessSlo
+        expr: la_canary_freshness_seconds > 90
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Tazelik hedefi (90 sn) aşılıyor"
+          runbook: docs/runbooks/shipper-lag.md
+
+  - name: la-query
+    rules:
+      - alert: QueryQueueSaturated
+        expr: la_query_queue_depth > 16
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Sorgu kuyruğu doluyor — query node ekleyin"
+      - alert: QueryErrorRate
+        expr: |
+          sum(rate(la_query_queries_total{status="error"}[10m]))
+            / clamp_min(sum(rate(la_query_queries_total[10m])), 1) > 0.05
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Sorgu hata oranı %5'in üzerinde"
+
+  - name: la-control
+    rules:
+      - alert: PublishLag
+        expr: la_control_publish_lag_seconds > 120
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Control plane anlık görüntüleri yayınlanamıyor"
