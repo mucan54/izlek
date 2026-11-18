@@ -232,45 +232,52 @@ await step('events captured right before leaving the page still arrive (keepaliv
   await p.page.evaluate(() => izlek.capture('last_words', { n: 1 }))
   await new Promise((r) => setTimeout(r, 100))
   assert.equal(named('last_words').length, 0, 'still queued in memory')
+  const preflights = state.preflights
   await p.page.goto(`${SITE}/other`)
   const [e] = await waitEvent('last_words')
   assert.equal(e.post.auth, 'query', 'unload path authenticates with ?t=')
   assert.equal(e.post.gzip, false)
+  assert.equal(state.preflights, preflights, 'the unload request is a simple CORS request: no preflight')
   const names = e.batch.records.map((r) => r.name)
   assert.ok(names.includes('pageleave'), `pageleave in the unload batch: ${names}`)
   await p.page.close()
 })
 
-await step('a batch the server did not accept is persisted and resent with the same batch_id', async () => {
+await step('batches the server did not accept are persisted and resent with the same batch_id', async () => {
   state.eventStatus = 503
-  const p = await openPage({ interval: 100, context: main.context })
+  const from = state.posts.length
+  const p = await openPage({ interval: 100 }) // fresh browser profile: nothing left over in localStorage
   await p.page.evaluate(() => izlek.capture('offline_event', { n: 7 }))
-  const failed = await waitFor('a rejected attempt', () =>
-    state.posts.find((x) => x.status == 503 && x.batch?.records.some((r) => r.name == 'offline_event')),
+  const storedIds = () =>
+    p.page.evaluate((prefix) => Object.keys(localStorage).filter((k) => k.startsWith(prefix) && k.length == prefix.length + 32).map((k) => k.slice(-32)), `la_${TOKEN}_`)
+  const rejected = await waitFor('a rejected attempt', () =>
+    state.posts.slice(from).find((x) => x.status == 503 && x.batch.records.some((r) => r.name == 'offline_event')),
   )
-  const id = failed.batch.batch_id
-  const key = `la_${TOKEN}_${id}`
-  assert.equal(typeof (await p.page.evaluate((k) => localStorage.getItem(k), key)), 'string', 'batch is in localStorage')
+  const ids = await storedIds()
+  assert.ok(ids.includes(rejected.batch.batch_id), 'the rejected batch is in localStorage under its batch_id')
+  assert.equal(named('offline_event').length, 0)
 
-  await p.page.reload()
+  await p.page.reload() // the new page load finds the batch in localStorage
   state.eventStatus = 200
-  const ok = await waitFor('the resend', () => state.posts.find((x) => x.status == 200 && x.batch?.batch_id == id), 15_000)
-  assert.deepEqual(ok.batch.records, failed.batch.records, 'identical records')
-  assert.ok(ok.batch.sent_at >= failed.batch.sent_at)
-  await waitFor('storage cleanup', () => p.page.evaluate((k) => localStorage.getItem(k) === null, key))
-  await p.page.close()
+  const [e] = await waitFor('the resend', () => named('offline_event').length && named('offline_event'), 15_000)
+  assert.ok(ids.includes(e.batch.batch_id), 'resent under the batch_id it was stored with')
+  assert.deepEqual(obj(e.props), { n: 7 })
+  const ok = await waitFor('the retried batch', () => state.posts.find((x) => x.status == 200 && x.batch.batch_id == rejected.batch.batch_id), 15_000)
+  assert.deepEqual(ok.batch.records, rejected.batch.records, 'identical records')
+  assert.ok(ok.batch.sent_at > rejected.batch.sent_at, 'sent_at is restamped')
+  await waitFor('storage cleanup', async () => !(await storedIds()).some((id) => ids.includes(id)))
+  await p.context.close()
 })
 
 await step('headless/bot user agents are not tracked', async () => {
-  const before = state.posts.length
   const context = await browser.newContext() // default UA contains "HeadlessChrome"
-  const p = await openPage({ context })
+  const p = await openPage({ context, path: '/bot' })
   assert.match(await p.page.evaluate(() => navigator.userAgent), /HeadlessChrome/)
   await p.page.evaluate(() => izlek.capture('bot_event'))
   await new Promise((r) => setTimeout(r, 700))
   await p.page.goto(`${SITE}/other`)
   await new Promise((r) => setTimeout(r, 300))
-  assert.equal(state.posts.length, before)
+  assert.equal(state.posts.filter((x) => x.batch?.context.some((c) => c.k == 'path' && c.v == '/bot')).length, 0)
   assert.equal(named('bot_event').length, 0)
   assert.deepEqual(await context.cookies(), [])
   await context.close()
@@ -285,18 +292,24 @@ await step('replay: decodable chunks, inputs masked, images blank, scroll and to
   await p.page.type('#name', SECRET)
   await p.page.type('#pw', 'p4ssw0rd!')
   await p.page.click('#buy')
+  // chunks close after 5 s; an idle page records nothing more
+  await waitFor('the first chunk', () => state.chunks.length >= 1, 10_000)
+  await p.page.waitForTimeout(1200)
+  assert.equal(state.chunks.length, 1, 'no uploads while nothing happens')
+
+  await p.page.click('#title') // input again: a new chunk opens with a full snapshot
   await p.page.waitForTimeout(700)
   await p.page.mouse.wheel(0, 400)
-  await p.page.waitForTimeout(700)
+  await p.page.waitForTimeout(900)
   assert.equal(await p.page.evaluate(() => scrollY), 400)
   await p.page.evaluate(() => izlek.identify('replay-user'))
   await p.page.click('#nav') // screen change
-  // chunks close every 5 s; leaving the page flushes the tail
-  await waitFor('two uploaded chunks', () => state.chunks.length >= 2, 15_000)
+  await waitFor('the second chunk', () => state.chunks.length >= 2, 10_000)
+  const replayAnon = await p.page.evaluate((k) => JSON.parse(localStorage.getItem(k)).a, `la_${TOKEN}`)
   await p.page.goto(`${SITE}/other`)
-  await p.page.waitForTimeout(500)
+  await p.page.waitForTimeout(300)
 
-  const pv = collector.accepted().filter((r) => r.name == 'pageview').at(-1)
+  const pv = await waitFor('the replay page\'s pageview', () => collector.accepted().find((r) => r.name == 'pageview' && r.batch.anon_id == replayAnon))
   const chunks = state.chunks
   for (const c of chunks) assert.equal(c.error, undefined, `chunk rejected: ${c.error}`)
   assert.deepEqual(chunks.map((c) => c.chunk.seq), chunks.map((_, i) => i), 'seq counts up from 0')
@@ -305,6 +318,7 @@ await step('replay: decodable chunks, inputs masked, images blank, scroll and to
   const kinds = new Set()
   let lastDelta = -Infinity
   let scrolled
+  let settling = false
   for (const c of chunks) {
     const { chunk, query } = c
     assert.equal(c.encoding, 'gzip')
@@ -331,8 +345,12 @@ await step('replay: decodable chunks, inputs masked, images blank, scroll and to
         lastDelta = f.t
       }
       applyFrame(scene, f)
-      if (f.kind == 3 && !scrolled) {
+      if (f.kind == 3) {
         assert.equal(f.node_id, 1)
+        settling = true
+      } else if (f.kind == 1 && settling) {
+        // the delta after a scroll puts fixed elements back; look at the wireframe then
+        settling = false
         scrolled = structuredClone([...scene.nodes.values()])
       }
     }
@@ -401,6 +419,13 @@ await browser.close()
 await collector.close()
 await new Promise((r) => (site.closeAllConnections(), site.close(r)))
 
+// Informational: batches that reached the collector more than once. This is the
+// at-least-once delivery at work (same batch_id, so the real server drops the copy).
+const seenIds = new Map()
+for (const post of state.posts) if (post.status == 200) seenIds.set(post.batch.batch_id, (seenIds.get(post.batch.batch_id) || 0) + 1)
+const repeats = [...seenIds.values()].filter((n) => n > 1).length
+console.log(`\nbatches accepted: ${seenIds.size}, of which delivered more than once (deduplicated by batch_id): ${repeats}`)
+
 const failed = steps.filter((s) => !s.ok)
-console.log(`\nbrowser smoke: ${steps.length - failed.length}/${steps.length} steps passed (${state.posts.length} event posts, ${state.chunks.length} replay chunks)`)
+console.log(`browser smoke: ${steps.length - failed.length}/${steps.length} steps passed (${state.posts.length} event posts, ${state.chunks.length} replay chunks)`)
 process.exit(failed.length ? 1 : 0)

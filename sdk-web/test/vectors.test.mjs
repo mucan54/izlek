@@ -69,6 +69,11 @@ test('wire.json valid[] + tolerant[]: the test helper decoder agrees', () => {
   }
 })
 
+test('wire.json invalid[]: the test helper decoder (used by the smoke-test collector) rejects all of them', () => {
+  assert.ok(wire.invalid.length >= 20)
+  for (const v of wire.invalid) assert.throws(() => decodeBatch(fromHex(v.hex)), v.name)
+})
+
 test('murmur3.json', () => {
   const m = vectors('murmur3')
   assert.equal(m.seed, 0)

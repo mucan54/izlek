@@ -1,5 +1,6 @@
 // Builds dist/: ESM modules for bundlers and minified IIFE files for <script> tags.
 import { build } from 'esbuild'
+import { rmSync } from 'node:fs'
 
 const common = { bundle: true, target: 'es2020', logLevel: 'warning', legalComments: 'none' }
 
@@ -30,21 +31,26 @@ export const esm = (extra = {}) =>
     ...extra,
   })
 
-export const iife = (entry, globalName, outfile, extra = {}) =>
+export const iife = (entry, outfile, extra = {}) =>
   build({
     ...common,
     entryPoints: [entry],
     format: 'iife',
-    globalName,
     minify: true,
     outfile,
-    plugins: entry.endsWith('index.ts') ? [] : [coreFromGlobal],
+    plugins: entry.includes('core') ? [] : [coreFromGlobal],
     ...extra,
   })
 
+/** [entry, output] of the three <script> bundles. */
+export const scripts = [
+  ['src/script-core.ts', 'dist/izlek.min.js'],
+  ['src/script-flags.ts', 'dist/izlek-flags.min.js'],
+  ['src/script-replay.ts', 'dist/izlek-replay.min.js'],
+]
+
 if (import.meta.url === `file://${process.argv[1]}`) {
+  rmSync('dist', { recursive: true, force: true })
   await esm()
-  await iife('src/index.ts', 'izlek', 'dist/izlek.min.js')
-  await iife('src/flags.ts', 'izlekFlags', 'dist/izlek-flags.min.js')
-  await iife('src/replay.ts', 'izlekReplay', 'dist/izlek-replay.min.js')
+  for (const [entry, outfile] of scripts) await iife(entry, outfile)
 }

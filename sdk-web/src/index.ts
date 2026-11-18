@@ -319,7 +319,11 @@ export const create = (): Client => {
       } else if (status == 413) split(b)
       else
         until =
-          t + (status == 429 && wait > 0 ? wait * 1e3 : Math.min(3e5, 1e3 * 2 ** fails++) * (0.5 + Math.random() / 2))
+          t +
+          // the server sends Retry-After with 429 and 503 (spec/wire.md §4)
+          ((status == 429 || status == 503) && wait > 0
+            ? wait * 1e3
+            : Math.min(3e5, 1e3 * 2 ** fails++) * (0.5 + Math.random() / 2))
     }
   }
 

@@ -28,12 +28,15 @@
     "./replay-decode": {
       "types": "./dist/types/replay-decode.d.ts",
       "default": "./dist/replay-decode.js"
+    },
+    "./wire": {
+      "types": "./dist/types/wire.d.ts",
+      "default": "./dist/wire.js"
     }
   },
   "scripts": {
-    "build": "node build.mjs",
+    "build": "node build.mjs && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "types": "tsc --emitDeclarationOnly --declaration --outDir dist/types",
     "test:unit": "node --test test/*.test.mjs",
     "test:browser": "node test/browser/smoke.mjs",
     "size": "node scripts/size.mjs",

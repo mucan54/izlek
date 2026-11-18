@@ -308,6 +308,18 @@ test('429: waits for Retry-After, then resends the same batch', async () => {
   assert.equal(batchKeys(env).length, 0)
 })
 
+test('503 with Retry-After (server back-pressure) is honoured the same way', async () => {
+  const { env, la } = boot()
+  la.capture('a')
+  env.respond((_call, i) => (i == 0 ? { status: 503, headers: { 'retry-after': '30' } } : 200))
+  await la.flush()
+  await tick(29_999)
+  assert.equal(env.calls.length, 1)
+  await tick(1)
+  assert.equal(env.calls.length, 2)
+  assert.equal(env.calls[1].batch.batch_id, env.calls[0].batch.batch_id)
+})
+
 test('429 without a readable Retry-After falls back to backoff', async () => {
   mock.method(Math, 'random', () => 1)
   const { env, la } = boot()
