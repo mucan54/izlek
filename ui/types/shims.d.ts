@@ -27,3 +27,6 @@ declare module 'node:zlib' {
   export function gzipSync(data: Uint8Array): Uint8Array
 }
 declare module '*.mjs'
+
+/** Absolute path of /ui, injected by scripts/unit.mjs. */
+declare const __UI_ROOT__: string

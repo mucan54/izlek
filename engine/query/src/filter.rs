@@ -9,7 +9,6 @@ use crate::json;
 use crate::udf::{self, View};
 use arrow::datatypes::DataType;
 use datafusion::common::ScalarValue;
-use datafusion::functions::core::expr_ext::FieldAccessor as _;
 use datafusion::logical_expr::{cast, lit, Expr, ScalarUDF};
 use datafusion::prelude::{coalesce, ident};
 use la_core::persons::PersonTable;
@@ -364,7 +363,7 @@ impl Compiler {
         match f {
             Filter::And(items) => items.iter().map(|x| self.compile(x)).reduce(Expr::and).unwrap_or_else(|| lit(true)),
             Filter::Or(items) => items.iter().map(|x| self.compile(x)).reduce(Expr::or).unwrap_or_else(|| lit(false)),
-            Filter::Not(x) => Expr::not(self.compile(x)),
+            Filter::Not(x) => datafusion::logical_expr::not(self.compile(x)),
             Filter::Leaf { prop, op, value } => {
                 let v = self.views(prop);
                 match op {
@@ -376,9 +375,9 @@ impl Compiler {
                         }
                     }
                     Op::Eq => self.eq(&v, value),
-                    Op::Ne => Expr::not(self.eq(&v, value)),
+                    Op::Ne => datafusion::logical_expr::not(self.eq(&v, value)),
                     Op::In => self.any_of(&v, value.as_array().map(Vec::as_slice).unwrap_or(&[])),
-                    Op::NotIn => Expr::not(self.any_of(&v, value.as_array().map(Vec::as_slice).unwrap_or(&[]))),
+                    Op::NotIn => datafusion::logical_expr::not(self.any_of(&v, value.as_array().map(Vec::as_slice).unwrap_or(&[]))),
                     Op::Gt | Op::Gte | Op::Lt | Op::Lte => {
                         let Some(n) = json::request_value_num(value) else {
                             return lit(false);

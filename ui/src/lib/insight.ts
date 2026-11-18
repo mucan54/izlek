@@ -97,5 +97,5 @@ export const cleanQuery = (kind: InsightKind, query: WithUi<StoredQuery>): WithU
 /** The proxy request body: cleaned, `ui` removed, `range` → `from`/`to`. */
 export const requestBody = (kind: InsightKind, query: WithUi<StoredQuery>, now: number): Record<string, unknown> => {
   const { ui: _ui, ...rest } = cleanQuery(kind, query)
-  return withBounds(rest, now)
+  return { ...withBounds(rest, now) }
 }

@@ -179,6 +179,31 @@ class HttpIntegrationTest {
     }
 
     @Test
+    fun authErrorsAreSeenAsStatusCodesByTheRealTransport() = runBlocking {
+        // The JDK client has special handling for 401; the SDK must still see the plain status
+        // so that it can drop the batch and pause (design §3.5).
+        val dir = tempDir()
+        val config = Config(token = "pk_revoked", host = host, flushAt = 1, captureLifecycle = false)
+        statuses.addAll(listOf(401))
+        Analytics.setup(config, PlatformContext(storageDir = dir))
+        Analytics.capture("rejected")
+        withTimeout(20_000) { Analytics.flush() }
+        val core = Analytics.coreOrNull()!!
+        assertEquals(401, core.stats.lastStatus)
+        assertEquals(1, core.stats.droppedRecords)
+        assertEquals(1, received.size)
+        Analytics.capture("held back for an hour")
+        withTimeout(20_000) { Analytics.flush() }
+        delay(1_500)
+        assertEquals(1, received.size, "sending is paused after 401")
+
+        for (status in listOf(401, 403, 407, 413, 500)) {
+            statuses.add(status)
+            assertEquals(status, httpPost("$host/v1/e", mapOf("Authorization" to "Bearer x"), ByteArray(2_000)), "status $status")
+        }
+    }
+
+    @Test
     fun platformHttpFunctions() = runBlocking {
         assertEquals(200, httpPost("$host/v1/e", mapOf("Authorization" to "Bearer x"), byteArrayOf(1, 2, 3)))
         assertEquals(3, received.single().body.size)

@@ -12,6 +12,8 @@ type ButtonProps = Omit<JSX.HTMLAttributes<HTMLButtonElement>, 'size'> & {
   busy?: boolean
   disabled?: boolean
   type?: 'button' | 'submit'
+  /** id of the form a submit button outside it belongs to */
+  form?: string
   children?: ComponentChildren
 }
 

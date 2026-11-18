@@ -69,7 +69,7 @@ pub struct Engine {
 }
 
 /// Everything a query needs to know about its project, frozen at plan time.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Snapshot {
     pub project: u32,
     /// Inclusive start, unix ms.

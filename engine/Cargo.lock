@@ -2037,8 +2037,19 @@ dependencies = [
 name = "la-compactor"
 version = "0.1.0"
 dependencies = [
+ "arrow",
+ "bytes",
+ "futures",
  "la-codec",
  "la-core",
+ "object_store",
+ "parquet",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2111,14 +2122,31 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
 name = "la-shipper"
 version = "0.1.0"
 dependencies = [
+ "arrow",
+ "bytes",
+ "chrono",
+ "futures",
  "la-codec",
+ "la-compactor",
  "la-core",
+ "parquet",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "zstd",
 ]
 
 [[package]]

@@ -17,7 +17,8 @@ plugins {
 
 val androidEnabled = izlekSwitch("android")
 val iosEnabled = izlekSwitch("ios")
-val linuxEnabled = izlekSwitch("linux")
+// Compose Multiplatform has no linuxX64 artifacts, so the Compose module never gets that target.
+val linuxEnabled = izlekSwitch("linux") && project.name != "analytics-replay-compose"
 
 if (androidEnabled) {
     apply(plugin = "com.android.library")

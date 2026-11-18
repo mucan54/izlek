@@ -9,6 +9,7 @@ pub mod gc;
 pub mod inspect;
 pub mod job;
 pub mod json;
+pub mod lease;
 pub mod merge;
 pub mod normalize;
 pub mod run;

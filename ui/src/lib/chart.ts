@@ -64,8 +64,11 @@ export const pickLabels = (n: number, max: number): number[] => {
   return out
 }
 
-/** Compact tick label: 950, 1,2 B, 3,4 Mn (decimal mark and suffixes supplied by the locale). */
-export const compact = (v: number, suffix: { k: string; m: string; b: string } = { k: 'K', m: 'M', b: 'B' }, mark = '.'): string => {
+/**
+ * Compact label: 950, 12,5 B, 3,4 Mn (decimal mark and suffixes supplied by
+ * the locale). Values below `from` are written in full.
+ */
+export const compact = (v: number, suffix: { k: string; m: string; b: string } = { k: 'K', m: 'M', b: 'B' }, mark = '.', from = 1e4): string => {
   const abs = Math.abs(v)
   const fmt = (x: number, s: string) => {
     const r = Math.abs(x) >= 100 ? Math.round(x) : Math.round(x * 10) / 10
@@ -73,8 +76,17 @@ export const compact = (v: number, suffix: { k: string; m: string; b: string } =
   }
   if (abs >= 1e9) return fmt(v / 1e9, suffix.b)
   if (abs >= 1e6) return fmt(v / 1e6, suffix.m)
-  if (abs >= 1e4) return fmt(v / 1e3, suffix.k)
+  if (abs >= from && abs >= 1e3) return fmt(v / 1e3, suffix.k)
   return String(Math.round(v * 100) / 100).replace('.', mark)
+}
+
+/**
+ * Labels for one axis in one style: all in full while the axis stays under
+ * 10 000, all compact once it reaches it (0 / 5 K / 10 K, never 5000 / 10 K).
+ */
+export const axisLabels = (ticks: number[], suffix?: { k: string; m: string; b: string }, mark = '.'): string[] => {
+  const reach = Math.max(0, ...ticks.map(Math.abs))
+  return ticks.map((t) => compact(t, suffix, mark, reach >= 1e4 ? 1e3 : Infinity))
 }
 
 /** Index of the bucket whose centre is nearest to pixel `x`. */

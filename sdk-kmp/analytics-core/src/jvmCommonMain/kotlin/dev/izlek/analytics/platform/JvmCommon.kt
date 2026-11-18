@@ -8,6 +8,7 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.RandomAccessFile
+import java.net.HttpRetryException
 import java.net.HttpURLConnection
 import java.net.URI
 import java.security.SecureRandom
@@ -34,11 +35,16 @@ internal actual suspend fun httpRequest(
         conn.instanceFollowRedirects = false
         for ((k, v) in headers) conn.setRequestProperty(k, v)
         if (body != null) {
+            // No streaming mode on purpose: with a streamed body the JDK turns 401/407 answers
+            // into HttpRetryException instead of reporting the status. Bodies are at most ~1 MB.
             conn.doOutput = true
-            conn.setFixedLengthStreamingMode(body.size)
             conn.outputStream.use { it.write(body) }
         }
-        val status = conn.responseCode
+        val status = try {
+            conn.responseCode
+        } catch (e: HttpRetryException) {
+            return@withContext HttpResponse(e.responseCode())
+        }
         val responseHeaders = HashMap<String, String>()
         for ((k, v) in conn.headerFields) {
             if (k != null && v != null) responseHeaders[k.lowercase()] = v.joinToString(",")

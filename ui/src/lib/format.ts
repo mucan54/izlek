@@ -1,6 +1,6 @@
 // Number, date and duration formatting for the current locale.
 import { INTL, S } from '../i18n'
-import { compact } from './chart'
+import { axisLabels, compact } from './chart'
 
 const nf = (opts: Intl.NumberFormatOptions) => new Intl.NumberFormat(INTL, opts)
 
@@ -13,6 +13,9 @@ export const fmtPct = (ratio: number, digits = 1): string =>
   Number.isFinite(ratio) ? '%' + nf({ maximumFractionDigits: digits, minimumFractionDigits: 0 }).format(ratio * 100) : '—'
 
 export const fmtCompact = (n: number): string => compact(n, S.fmt.compact, S.fmt.decimal)
+
+/** Tick labels for one chart axis (one style per axis). */
+export const fmtAxis = (ticks: number[]): string[] => axisLabels(ticks, S.fmt.compact, S.fmt.decimal)
 
 export const fmtBytes = (n: number): string => {
   const units = ['B', 'KB', 'MB', 'GB', 'TB']

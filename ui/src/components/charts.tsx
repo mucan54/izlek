@@ -4,7 +4,7 @@
 import { useMemo, useState } from 'preact/hooks'
 import { S } from '../i18n'
 import { band, nearestIndex, niceAxis, pickLabels, scaleLinear } from '../lib/chart'
-import { fmtCompact, fmtNum } from '../lib/format'
+import { fmtAxis, fmtNum } from '../lib/format'
 import { useWidth } from '../lib/hooks'
 
 export interface ChartSeries {
@@ -41,7 +41,7 @@ export const TimeChart = ({ type, labels, titles, series, height = 260, integer,
 
   const all = shown.flatMap((s) => s.values).filter((v): v is number => v != null)
   const axis = niceAxis(Math.min(0, ...all), Math.max(0, ...all), height > 200 ? 5 : 3, { integer })
-  const tickText = axis.ticks.map(fmtCompact)
+  const tickText = fmtAxis(axis.ticks)
   const left = Math.max(28, Math.max(...tickText.map((t) => t.length)) * 7 + 12)
   const right = 12
   const top = 10
