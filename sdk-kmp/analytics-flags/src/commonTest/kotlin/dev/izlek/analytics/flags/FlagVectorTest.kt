@@ -1,6 +1,7 @@
 package dev.izlek.analytics.flags
 
 import dev.izlek.analytics.internal.Json
+import dev.izlek.analytics.internal.Murmur3
 import dev.izlek.analytics.testkit.VectorJson
 import dev.izlek.analytics.testkit.VectorJson.list
 import dev.izlek.analytics.testkit.VectorJson.obj
@@ -47,6 +48,28 @@ class FlagVectorTest {
             val actual = FlagEvaluator.evaluate(ruleset.flags[c["flag"] as String]!!, props, c["user_id"] as String, c["anon_id"] as String)
             assertEquals(c["expect"], actual, Json.write(c))
         }
+    }
+
+    /** `b >= rollout` excludes: the bucket equal to the rollout value is the first one left out. */
+    @Test
+    fun rolloutBoundaryIsExclusive() {
+        val ruleset = Ruleset.parse(
+            """{"v":1,"flags":[
+                {"key":"f","enabled":true,"salt":"s","rules":[{"rollout":5000}],"default":"out"},
+                {"key":"v","enabled":true,"salt":"s","rules":[{"rollout":10000,"variants":[{"key":"a","w":5000},{"key":"b","w":5000}]}],"default":null}
+            ]}""",
+        )!!
+        fun idWithBucket(prefix: String, bucket: Int): String =
+            (0 until 2_000_000).asSequence().map { "id-$it" }.first { Murmur3.bucket(prefix + it) == bucket }
+        val f = ruleset.flags["f"]!!
+        assertEquals(true, FlagEvaluator.evaluate(f, emptyMap(), "", idWithBucket("s:f:", 4999)))
+        assertEquals("out", FlagEvaluator.evaluate(f, emptyMap(), "", idWithBucket("s:f:", 5000)))
+        assertEquals(true, FlagEvaluator.evaluate(f, emptyMap(), "", idWithBucket("s:f:", 0)))
+        assertEquals("out", FlagEvaluator.evaluate(f, emptyMap(), "", idWithBucket("s:f:", 9999)))
+        // variant ranges: [0, 5000) → a, [5000, 10000) → b
+        val v = ruleset.flags["v"]!!
+        assertEquals("a", FlagEvaluator.evaluate(v, emptyMap(), "", idWithBucket("s:v:v:", 4999)))
+        assertEquals("b", FlagEvaluator.evaluate(v, emptyMap(), "", idWithBucket("s:v:v:", 5000)))
     }
 
     private fun eval(cond: String, props: Map<String, Any?>): Boolean {
