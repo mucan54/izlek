@@ -175,12 +175,20 @@ Okuma: satırların `person_key`'i güncel kimlik eşlemesiyle yeniden çözül�
 Döngü:
 
 1. En büyük `n`'li planı oku. Segmentlerinden herhangi birinin `_done` işareti yoksa **o planı** (yeniden) yürüt.
-2. Aksi halde `_done`'sız segmentleri anahtar sırasıyla topla (30 sn ya da 256 MB açılmış), plan `n + 1`'i yoksa-oluştur ile yaz. "Zaten var" → 1'e dön.
+2. Aksi halde `_done`'sız segmentleri anahtar sırasıyla topla (30 sn ya da `LA_SHIPPER_BATCH_MB` açılmış bayt; varsayılan 64 MB), plan `n + 1`'i yoksa-oluştur ile yaz. "Zaten var" → 1'e dön.
 3. Yürüt: çöz → kimlik delta'sı (§3) → kişi delta'sı (§4) → L0 dosyaları (ad plan numarasından) → gün manifest'leri (`plans[shardkey] = n`) → şema istatistikleri → `_done` işaretleri.
 
 Aynı planın iki kez (hatta eşzamanlı) yürütülmesi aynı sonucu verir. Bir planın tüm adımları bitmeden sonraki plan oluşturulmaz.
 
 Segment listesi her zaman `wal/dt=…/hh=…/` önekleri üzerinden yapılır; shipper son 48 saatin öneklerini tarar (`--rebuild` tüm aralığı tarar).
+
+Aynı önek altındaki ek nesneler (uygulama ayrıntısı; okuyucular bilinmeyen adları yok sayar):
+
+| Anahtar | Anlam |
+|---|---|
+| `wal/_quarantine/<shardkey>/<segment>.json` | Açılamayan, sihri bozuk, eksik ya da çok büyük segment: neden ve plan numarası. Segment `_done` sayılır, veri **yazılmaz**; `la_shipper_segments_quarantined_total` artar (`docs/runbooks/corrupt-segment.md`) |
+| plan JSON'unda `rebuild` alanı | Rebuild planı ("çit"): bitene kadar shipper yeni plan kesmez |
+| `wal/_done/<shardkey>/_rebuild-<n:010>.ok` | Rebuild planı `n` tamamlandı; çit kalkar |
 
 ## 7. Kira (lease)
 
@@ -255,6 +263,8 @@ Motor genişletmesi: `person_keys` içindeki her `u:U` için kimlik eşlemesinde
 - Query: tombstone listesini ≤ 60 sn'de yeniler; `ts_ms > manifest.tombstone_ts` olanları satır filtresi olarak uygular.
 - Compactor: etkilenen günleri yeniden yazar, `tombstone_ts`'yi ilerletir; kişi/kimlik satırlarını ve `replay/` nesnelerini siler.
 - Tombstone dosyaları 400 gün saklanır (geç gelen/yeniden inşa edilen veriye de uygulanabilsin diye).
+
+Compactor'ın aynı önek altında tuttuğu ek nesneler: `tombstones/p=<pid>/_applied.state` (`{"side_ts": …}`: kişi ve kimlik tablosu temizliği tamamlanmış en yeni tombstone; dosya yoksa 0 sayılır ve temizlik yeniden yapılır) ve `<ts>-<id>-x.json` (bir `u:` anahtarının silme anındaki anonim kimlik genişletmesi; kimlik bağı silindikten sonra geç gelen veride de kişi tanınsın diye dondurulur). `-x` dosyaları okuyucular için sıradan tombstone'dur.
 
 ## 10. Çöp toplama ve saklama
 
