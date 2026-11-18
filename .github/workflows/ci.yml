@@ -6,12 +6,17 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false   # a newer push waits; a 30-minute run is not thrown away
 
 permissions:
   contents: read
 
 env:
+  # A real S3 implementation for the store contract tests: unlike the in-repo dev server it
+  # verifies SigV4 signatures and implements conditional writes itself.
+  MINIO_IMAGE: minio/minio:RELEASE.2025-04-22T22-12-26Z
+  MINIO_USER: izlek-ci
+  MINIO_PASSWORD: izlek-ci-secret-key
   GOTOOLCHAIN: local
   CARGO_TERM_COLOR: always
   # DataFusion with debug info does not fit on a hosted runner's disk.
@@ -63,6 +68,40 @@ jobs:
       - name: ui
         working-directory: ui
         run: npm ci && npm test
+
+  s3:
+    name: store contract on MinIO
+    runs-on: ubuntu-24.04
+    env:
+      LA_TEST_S3_ENDPOINT: http://127.0.0.1:9000
+      LA_TEST_S3_BUCKET: la-test
+      LA_TEST_S3_REGION: us-east-1
+      LA_TEST_S3_ACCESS_KEY: izlek-ci
+      LA_TEST_S3_SECRET_KEY: izlek-ci-secret-key
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start MinIO
+        run: |
+          docker pull -q "$MINIO_IMAGE" || { docker pull -q minio/minio:latest && docker tag minio/minio:latest "$MINIO_IMAGE"; }
+          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER="$MINIO_USER" -e MINIO_ROOT_PASSWORD="$MINIO_PASSWORD" "$MINIO_IMAGE" server /data
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:9000/minio/health/live && break; sleep 1; done
+          AWS_ACCESS_KEY_ID="$MINIO_USER" AWS_SECRET_ACCESS_KEY="$MINIO_PASSWORD" AWS_DEFAULT_REGION=us-east-1 \
+            aws --endpoint-url http://127.0.0.1:9000 s3 mb s3://la-test
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Go client (SigV4, conditional put, listing, streaming)
+        run: go test -count=1 -v -run 'TestContract|TestPutIfAbsentRace' ./golib/objstore/
+      - name: Rust toolchain
+        working-directory: engine
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+          key: core
+      - name: Rust client (conditional put race, manifest commits)
+        working-directory: engine
+        run: cargo test -p la-core --test s3_real -- --nocapture
 
   kmp:
     name: kmp sdk (jvm)
@@ -124,3 +163,18 @@ jobs:
         run: node e2e/run.mjs --s3
         env:
           LA_E2E_GRADLE_ARGS: "-Pizlek.android=false"
+      - name: Start MinIO
+        run: |
+          docker pull -q "$MINIO_IMAGE" || { docker pull -q minio/minio:latest && docker tag minio/minio:latest "$MINIO_IMAGE"; }
+          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER="$MINIO_USER" -e MINIO_ROOT_PASSWORD="$MINIO_PASSWORD" "$MINIO_IMAGE" server /data
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:9000/minio/health/live && break; sleep 1; done
+          AWS_ACCESS_KEY_ID="$MINIO_USER" AWS_SECRET_ACCESS_KEY="$MINIO_PASSWORD" AWS_DEFAULT_REGION=us-east-1 \
+            aws --endpoint-url http://127.0.0.1:9000 s3 mb s3://la-test
+      - name: End-to-end (MinIO)
+        run: node e2e/run.mjs --s3
+        env:
+          LA_E2E_GRADLE_ARGS: "-Pizlek.android=false"
+          LA_E2E_S3_ENDPOINT: http://127.0.0.1:9000
+          LA_E2E_S3_BUCKET: la-test
+          LA_E2E_S3_ACCESS_KEY: izlek-ci
+          LA_E2E_S3_SECRET_KEY: izlek-ci-secret-key

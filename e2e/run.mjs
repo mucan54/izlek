@@ -5,8 +5,11 @@
 //
 //   node e2e/run.mjs [--s3] [--keep] [--skip-kmp] [--skip-ui] [--verbose]
 //
-// --s3 puts every service on the S3 protocol (the repository's devs3 server,
-// persisting to a directory) instead of the file:// store.
+// --s3 puts every service on the S3 protocol instead of the file:// store:
+// by default the repository's devs3 server (no signature checks). To use a
+// real S3 implementation, export LA_E2E_S3_ENDPOINT, LA_E2E_S3_BUCKET (must
+// exist), LA_E2E_S3_ACCESS_KEY and LA_E2E_S3_SECRET_KEY; the test then looks
+// at objects through the `aws` CLI.
 //
 // Go binaries are built here. The Rust binaries must exist already:
 //   (cd engine && cargo build -p la-shipper -p la-query)
@@ -46,6 +49,7 @@ const WORK = mkdtempSync(join(tmpdir(), 'izlek-e2e-'))
 const BIN = join(WORK, 'bin')
 const S3 = args.has('--s3')
 // With --s3 this is where devs3 keeps the bucket, so the test can look at objects either way.
+const EXT = S3 && process.env.LA_E2E_S3_ENDPOINT ? { endpoint: process.env.LA_E2E_S3_ENDPOINT, bucket: process.env.LA_E2E_S3_BUCKET, prefix: `e2e-${Date.now()}`, region: process.env.LA_E2E_S3_REGION || 'us-east-1' } : null
 const STORE = S3 ? join(WORK, 's3', 'e2e') : join(WORK, 'store')
 const LOGS = join(WORK, 'logs')
 for (const d of [BIN, STORE, LOGS]) mkdirSync(d, { recursive: true })
@@ -121,7 +125,28 @@ const walk = (dir) => {
   if (!existsSync(dir)) return []
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]))
 }
-const storeKeys = (prefix = '') => walk(join(STORE, prefix)).map((f) => f.slice(STORE.length + 1))
+// The store as the test sees it: a directory (file://, devs3 -dir) or, for an external S3, the aws CLI.
+function aws(args) {
+  const r = spawnSync('aws', ['--endpoint-url', EXT.endpoint, ...args], {
+    env: { ...process.env, AWS_ACCESS_KEY_ID: process.env.LA_E2E_S3_ACCESS_KEY, AWS_SECRET_ACCESS_KEY: process.env.LA_E2E_S3_SECRET_KEY, AWS_DEFAULT_REGION: EXT.region, AWS_EC2_METADATA_DISABLED: 'true' },
+    maxBuffer: 64 << 20,
+  })
+  if (r.error) throw r.error
+  return r
+}
+function storeKeys(prefix = '') {
+  if (!EXT) return walk(join(STORE, prefix)).map((f) => f.slice(STORE.length + 1))
+  const r = aws(['s3api', 'list-objects-v2', '--bucket', EXT.bucket, '--prefix', `${EXT.prefix}/${prefix}`, '--query', 'Contents[].Key', '--output', 'json'])
+  assert.equal(r.status, 0, String(r.stderr))
+  return (JSON.parse(String(r.stdout) || 'null') || []).map((k) => k.slice(EXT.prefix.length + 1))
+}
+const storeHas = (key) => (EXT ? storeKeys(key).includes(key) : existsSync(join(STORE, key)))
+function storeRead(key) {
+  if (!EXT) return readFileSync(join(STORE, key), 'utf8')
+  const r = aws(['s3', 'cp', `s3://${EXT.bucket}/${EXT.prefix}/${key}`, '-'])
+  assert.equal(r.status, 0, String(r.stderr))
+  return String(r.stdout)
+}
 
 const steps = []
 async function step(name, fn) {
@@ -143,7 +168,7 @@ function skip(name, why) {
 
 // ───────────────────────── build ─────────────────────────
 
-console.log(`work dir: ${WORK} (${S3 ? 's3:// via devs3' : 'file:// store'})`)
+console.log(`work dir: ${WORK} (${EXT ? `s3://${EXT.bucket}/${EXT.prefix} at ${EXT.endpoint}` : S3 ? 's3:// via devs3' : 'file:// store'})`)
 {
   const r = run('go build', 'go', ['build', '-o', BIN + '/', './ingest/cmd/la-ingest', './control/cmd/la-control', './canary/cmd/la-canary', './golib/devs3/cmd/devs3'], { CGO_ENABLED: '0' }, { cwd: ROOT })
   if (r.status !== 0) process.exit(2)
@@ -164,7 +189,10 @@ const CONTROL = `http://127.0.0.1:${pControl}`
 const INTERNAL = 'e2e-internal-secret'
 const OWNER = { email: 'e2e@example.com', password: 'e2e-password-123' }
 let storeEnv = { LA_STORE_URL: 'file://' + STORE }
-if (S3) {
+if (EXT) {
+  assert.ok(EXT.bucket && process.env.LA_E2E_S3_ACCESS_KEY && process.env.LA_E2E_S3_SECRET_KEY, 'LA_E2E_S3_BUCKET, LA_E2E_S3_ACCESS_KEY and LA_E2E_S3_SECRET_KEY are required with LA_E2E_S3_ENDPOINT')
+  storeEnv = { LA_STORE_URL: `s3://${EXT.bucket}/${EXT.prefix}`, LA_S3_ENDPOINT: EXT.endpoint, LA_S3_ACCESS_KEY: process.env.LA_E2E_S3_ACCESS_KEY, LA_S3_SECRET_KEY: process.env.LA_E2E_S3_SECRET_KEY, LA_S3_REGION: EXT.region }
+} else if (S3) {
   const pS3 = await freePort()
   start('devs3', join(BIN, 'devs3'), ['-listen', `127.0.0.1:${pS3}`, '-dir', join(WORK, 's3')], {})
   storeEnv = { LA_STORE_URL: 's3://e2e', LA_S3_ENDPOINT: `http://127.0.0.1:${pS3}`, LA_S3_ACCESS_KEY: 'e2e', LA_S3_SECRET_KEY: 'e2e', LA_S3_REGION: 'us-east-1' }
@@ -258,8 +286,8 @@ try {
     boot = JSON.parse(r.stdout.trim().split('\n').pop())
     assert.match(boot.token, /^pk_[0-9A-Za-z]{32}$/)
     assert.match(boot.secret, /^sk_[0-9A-Za-z]{32}$/)
-    for (const f of ['control/tokens.json', 'control/keys.json', 'control/projects.json']) assert.ok(existsSync(join(STORE, f)), f)
-    assert.ok(!readFileSync(join(STORE, 'control/keys.json'), 'utf8').includes(boot.secret), 'only the hash of the secret is published')
+    for (const f of ['control/tokens.json', 'control/keys.json', 'control/projects.json']) assert.ok(storeHas(f), f)
+    assert.ok(!storeRead('control/keys.json').includes(boot.secret), 'only the hash of the secret is published')
     // Running it again creates nothing and prints no secret.
     const again = JSON.parse(run('bootstrap again', join(BIN, 'la-control'), ['bootstrap', '--email', OWNER.email, '--password', OWNER.password, '--org', 'E2E', '--project', 'Shop', '--json'], controlEnv).stdout.trim())
     assert.deepEqual([again.created, again.secret, again.token], [[], undefined, boot.token])
@@ -396,7 +424,7 @@ try {
     })
     const key = events[0].props.key
     assert.ok(key.startsWith(`replay/p=${boot.project_id}/`) && key.includes(webSession), key)
-    assert.ok(existsSync(join(STORE, key)), 'the chunk object exists in the store')
+    assert.ok(storeHas(key), 'the chunk object exists in the store')
     const res = await fetch(`${QUERY_URL}/q/replay?key=${encodeURIComponent(key)}`, { headers: { Authorization: `Bearer ${boot.secret}` } })
     assert.equal(res.status, 200)
     const bytes = new Uint8Array(await res.arrayBuffer()) // fetch undoes Content-Encoding: gzip
@@ -499,7 +527,7 @@ try {
     assert.deepEqual(after, before)
     Object.assign(counts, after)
     const manifestDir = storeKeys(`data/p=${boot.project_id}/d=${day(0)}/_m`).sort().pop()
-    const manifest = JSON.parse(readFileSync(join(STORE, manifestDir), 'utf8'))
+    const manifest = JSON.parse(storeRead(manifestDir))
     assert.ok(manifest.files.some((f) => f.level >= 1), 'the day now has a compacted file')
     assert.ok(manifest.files.length < filesBefore, `${manifest.files.length} files listed, ${filesBefore} before`)
     assert.equal(await count("event = 'ph_event'"), 3)
@@ -575,7 +603,7 @@ try {
     assert.equal((await fetch(`${INGEST}/flags/${tok.token}.json`)).status, 404)
     await api('DELETE', `${P()}/tokens/${tok.token}`, null)
     await waitFor('deleted token unknown', async () => (await send()) == 401, 15_000)
-    assert.ok(!existsSync(join(STORE, `flags/${tok.token}.json`)), 'its ruleset file is removed')
+    assert.ok(!storeHas(`flags/${tok.token}.json`), 'its ruleset file is removed')
   })
 
   await step('ingestion drains on SIGTERM: exit 0, nothing left on local disk, late events still arrive', async () => {
@@ -588,7 +616,7 @@ try {
 
   await step('closing the project: key stops working, compactor deletes everything it stored', async () => {
     await api('DELETE', P(), null)
-    await waitFor('closed flag published', () => JSON.parse(readFileSync(join(STORE, 'control/projects.json'), 'utf8')).projects[boot.project_id]?.closed === true, 10_000)
+    await waitFor('closed flag published', () => JSON.parse(storeRead('control/projects.json')).projects[boot.project_id]?.closed === true, 10_000)
     await waitFor('query refuses the closed project', async () => {
       const res = await fetch(`${QUERY_URL}/q/sql`, { method: 'POST', headers: { Authorization: `Bearer ${boot.secret}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ ...RANGE, sql: 'SELECT 1' }) })
       return res.status == 401 || res.status == 403
