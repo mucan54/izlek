@@ -51,8 +51,10 @@ pub fn describe_events_file(key: &str, data: Bytes) -> Result<FileEntry> {
             .column_by_name("ts")
             .and_then(|c| c.as_any().downcast_ref::<TimestampMillisecondArray>())
             .ok_or_else(bad)?;
-        let pk =
-            batch.column_by_name("person_key").and_then(|c| c.as_any().downcast_ref::<StringArray>()).ok_or_else(bad)?;
+        let pk = batch
+            .column_by_name("person_key")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+            .ok_or_else(bad)?;
         if entry.rows == 0 {
             entry.min_person = pk.value(0).to_owned();
         }

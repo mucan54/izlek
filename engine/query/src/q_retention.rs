@@ -6,12 +6,11 @@ use crate::error::{ApiError, ApiResult};
 use crate::filter::Filter;
 use crate::request::{buckets, iso, EventSel, Interval, Obj};
 use crate::scan::ScanRequest;
-use crate::session::{merged_stream, QueryCx};
+use crate::session::QueryCx;
 use crate::udf::bucket_of;
 use arrow::array::{Array, AsArray, RecordBatch};
 use arrow::datatypes::TimestampMillisecondType;
 use datafusion::prelude::ident;
-use futures::StreamExt;
 use serde_json::{json, Value};
 
 pub const MAX_PERIODS: usize = 64;
@@ -79,6 +78,20 @@ pub struct RetentionResult {
     pub size: Vec<u64>,
     /// `returned[cohort][k]`, `k < periods`.
     pub returned: Vec<Vec<u64>>,
+}
+
+impl RetentionResult {
+    /// Adds the matrix of a disjoint set of persons.
+    pub fn merge(&mut self, other: &RetentionResult) {
+        for (a, b) in self.size.iter_mut().zip(&other.size) {
+            *a += b;
+        }
+        for (row, other_row) in self.returned.iter_mut().zip(&other.returned) {
+            for (a, b) in row.iter_mut().zip(other_row) {
+                *a += b;
+            }
+        }
+    }
 }
 
 pub struct RetentionAcc {
@@ -180,14 +193,24 @@ impl RetentionAcc {
 }
 
 pub async fn compute(cx: &QueryCx, req: &RetentionRequest) -> ApiResult<RetentionResult> {
-    let plan = cx.plan(&req.scan(cx))?;
-    let mut stream = merged_stream(plan, &["person_key", "ts"], cx.task_ctx())?;
-    let mut acc = RetentionAcc::new(req.from_ms, req.to_ms, req.period, req.periods);
-    while let Some(batch) = stream.next().await {
-        acc.push_batch(&batch?);
-        tokio::task::consume_budget().await;
+    let (from_ms, to_ms, period, periods) = (req.from_ms, req.to_ms, req.period, req.periods);
+    let parts = cx
+        .fold_ordered(
+            &req.scan(cx),
+            &["person_key", "ts"],
+            || RetentionAcc::new(from_ms, to_ms, period, periods),
+            |acc: &mut RetentionAcc, batch| {
+                acc.push_batch(batch);
+                Ok(())
+            },
+        )
+        .await?;
+    let mut parts = parts.into_iter().map(RetentionAcc::finish);
+    let mut result = parts.next().unwrap_or_else(|| RetentionAcc::new(from_ms, to_ms, period, periods).finish());
+    for other in parts {
+        result.merge(&other);
     }
-    Ok(acc.finish())
+    Ok(result)
 }
 
 pub fn render(req: &RetentionRequest, r: &RetentionResult) -> Value {

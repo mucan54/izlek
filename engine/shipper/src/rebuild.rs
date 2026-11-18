@@ -180,8 +180,8 @@ impl Replay<'_> {
         // Side-table deltas are idempotent per (rebuild id, chunk).
         let delta_key = format!("rb{}", self.spec.id);
         for (project, batch) in std::mem::take(&mut self.pending) {
-            if !self.identity.contains_key(&project) {
-                self.identity.insert(project, IdentityMap::load(store, project).await?);
+            if let std::collections::hash_map::Entry::Vacant(e) = self.identity.entry(project) {
+                e.insert(IdentityMap::load(store, project).await?);
             }
             let map = self.identity.get_mut(&project).ok_or_else(|| ShipError::other("identity map missing"))?;
             let ProjectBatch { events, links, writes } = batch;
@@ -203,7 +203,9 @@ impl Replay<'_> {
                 }
             }
             for (day, mut rows) in by_day {
-                rows.sort_by(|a, b| a.sort_key_cmp(b).then(a.recv_ts.cmp(&b.recv_ts)).then_with(|| a.props.cmp(&b.props)));
+                rows.sort_by(|a, b| {
+                    a.sort_key_cmp(b).then(a.recv_ts.cmp(&b.recv_ts)).then_with(|| a.props.cmp(&b.props))
+                });
                 sort_and_dedupe(&mut rows);
                 let meta = EventsFileMeta {
                     project,
@@ -287,9 +289,8 @@ pub async fn rebuild(ctx: &ShipCtx, cctx: &la_compactor::Ctx, opts: &RebuildOpti
                 continue;
             };
             let map = shards.map_at(hour);
-            let shipped_for = |shard: u32| {
-                done.get(&format!("{}-{}", map.version, shard)).is_some_and(|set| set.contains(name))
-            };
+            let shipped_for =
+                |shard: u32| done.get(&format!("{}-{}", map.version, shard)).is_some_and(|set| set.contains(name));
             if !(0..map.shards.max(1)).any(shipped_for) {
                 continue; // still pending everywhere: the shipper will handle it
             }
@@ -339,8 +340,8 @@ pub async fn rebuild(ctx: &ShipCtx, cctx: &la_compactor::Ctx, opts: &RebuildOpti
     let set_plans: BTreeMap<String, u64> = report.fenced.iter().cloned().collect();
     let mut envs: HashMap<u32, Arc<ProjectEnv>> = HashMap::new();
     for ((project, day), paths) in runs {
-        if !envs.contains_key(&project) {
-            envs.insert(project, Arc::new(ProjectEnv::load(store, project).await?));
+        if let std::collections::hash_map::Entry::Vacant(e) = envs.entry(project) {
+            e.insert(Arc::new(ProjectEnv::load(store, project).await?));
         }
         let env = envs.get(&project).ok_or_else(|| ShipError::other("project env missing"))?.clone();
         let current = manifest::load_day(store, project, &day).await?;
@@ -361,7 +362,9 @@ pub async fn rebuild(ctx: &ShipCtx, cctx: &la_compactor::Ctx, opts: &RebuildOpti
                 report.days_rebuilt.push((project, day));
             }
             other => {
-                return Err(ShipError::other(format!("rebuild could not commit {day} of project {project}: {other:?}")));
+                return Err(ShipError::other(format!(
+                    "rebuild could not commit {day} of project {project}: {other:?}"
+                )));
             }
         }
     }

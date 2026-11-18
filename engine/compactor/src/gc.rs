@@ -42,7 +42,7 @@ pub async fn gc_dir(ctx: &Ctx, prefix: &str, now_ms: i64) -> Result<u64> {
         .filter(|o| o.key.starts_with(&manifest_dir))
         .filter_map(|o| keys::manifest_version(&o.key).map(|v| (v, o)))
         .collect();
-    versions.sort_by(|a, b| b.0.cmp(&a.0));
+    versions.sort_by_key(|v| std::cmp::Reverse(v.0));
     let Some((latest, latest_obj)) = versions.first().copied() else {
         // No manifest at all: nothing can be proven unreferenced-by-design
         // except by age; leave such strays to retention.

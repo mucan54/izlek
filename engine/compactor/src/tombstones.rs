@@ -13,7 +13,9 @@
 //! frozen into an extra tombstone object `<ts>-<id>-x.json` listing those ids.
 
 use crate::config::Ctx;
-use crate::job::{commit, fetch_input, stage, CommitPlan, Group, Outcome, ProjectEnv, Replace, Staged, TombstoneAdvance};
+use crate::job::{
+    commit, fetch_input, stage, CommitPlan, Group, Outcome, ProjectEnv, Replace, Staged, TombstoneAdvance,
+};
 use crate::merge::InputData;
 use arrow::array::{Array, StringArray};
 use la_core::error::{Error, Result};
@@ -204,7 +206,8 @@ pub async fn write_expansions(ctx: &Ctx, env: &ProjectEnv, side_ts: i64) -> Resu
             continue;
         }
         anon_ids.sort();
-        let x = Tombstone { id: format!("{}{EXPANSION_SUFFIX}", t.id), ts_ms: t.ts_ms, person_keys: Vec::new(), anon_ids };
+        let x =
+            Tombstone { id: format!("{}{EXPANSION_SUFFIX}", t.id), ts_ms: t.ts_ms, person_keys: Vec::new(), anon_ids };
         wrote |= ctx.store.put_json_if_absent(&tombstone_key(env.project, &x), &x).await?;
     }
     Ok(wrote)
@@ -217,9 +220,7 @@ pub async fn finish_side_tables(ctx: &Ctx, env: &ProjectEnv) -> Result<usize> {
         env.tombstones.person_keys.iter().filter_map(|k| k.strip_prefix("u:")).map(str::to_owned).collect();
     persons::compact(&ctx.store, env.project, &env.tombstones.person_keys, true).await?;
     let links = identity::rewrite_dropping(&ctx.store, env.project, &env.tombstones.anon_ids, &users).await?;
-    ctx.store
-        .put_json(&keys::tombstone_state(env.project), &TombstoneState { side_ts: env.tombstones.max_ts })
-        .await?;
+    ctx.store.put_json(&keys::tombstone_state(env.project), &TombstoneState { side_ts: env.tombstones.max_ts }).await?;
     if links > 0 {
         ctx.metrics.inc("identity_links_deleted_total", &[], links as u64);
     }

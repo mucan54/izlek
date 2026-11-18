@@ -13,13 +13,12 @@ use crate::filter::{Filter, Ref};
 use crate::intern::Interner;
 use crate::request::{buckets, iso, Interval, Obj};
 use crate::scan::ScanRequest;
-use crate::session::{fold_partitions, merged_stream, MemBudget, QueryCx};
+use crate::session::{fold_partitions, MemBudget, QueryCx};
 use crate::udf::BucketFn;
 use arrow::array::{Array, AsArray, RecordBatch, StringArray};
 use arrow::datatypes::{Float64Type, Int32Type};
 use datafusion::logical_expr::{Expr, ScalarUDF};
 use datafusion::prelude::ident;
-use futures::StreamExt;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -403,38 +402,26 @@ impl TrendsResult {
 
 pub async fn compute(cx: &QueryCx, req: &TrendsRequest) -> ApiResult<(Vec<i64>, TrendsResult)> {
     let starts = Arc::new(buckets(req.from_ms, req.to_ms, req.interval));
-    let plan = cx.plan(&req.scan(cx, &starts))?;
+    let scan = req.scan(cx, &starts);
     let layout = req.layout();
-    let budget = Arc::new(cx.reserve("trends"));
+    let budget: Arc<MemBudget> = Arc::new(cx.reserve("trends"));
+    let new_state = || TrendsAcc::new(layout.clone());
+    let fold = move |acc: &mut TrendsAcc, batch: &RecordBatch| {
+        acc.push_batch(batch);
+        budget.grow(acc.take_new_bytes())
+    };
     let merged_needed = req.has_unique() && matches!(req.interval, Interval::Week | Interval::Month);
-    let mut result = TrendsResult::default();
-    if merged_needed {
-        // A person's rows for one bucket span several days: merge on
+    let parts = if merged_needed {
+        // A person's rows for one bucket span several days: merge the days on
         // (person_key, bucket) — valid because the bucket is monotone in ts.
-        let mut stream = merged_stream(plan, &["person_key", "b"], cx.task_ctx())?;
-        let mut acc = TrendsAcc::new(layout);
-        while let Some(batch) = stream.next().await {
-            acc.push_batch(&batch?);
-            budget.grow(acc.take_new_bytes())?;
-            tokio::task::consume_budget().await;
-        }
-        result = acc.finish();
+        cx.fold_ordered(&scan, &["person_key", "b"], new_state, fold).await?
     } else {
-        let b: Arc<MemBudget> = Arc::clone(&budget);
-        let parts = fold_partitions(
-            plan,
-            cx.task_ctx(),
-            cx.engine.cfg.partitions,
-            || TrendsAcc::new(layout.clone()),
-            move |acc: &mut TrendsAcc, batch| {
-                acc.push_batch(batch);
-                b.grow(acc.take_new_bytes())
-            },
-        )
-        .await?;
-        for acc in parts {
-            result.merge(acc.finish());
-        }
+        let plan = cx.plan(&scan)?;
+        fold_partitions(plan, cx.task_ctx(), cx.engine.cfg.partitions, new_state, fold).await?
+    };
+    let mut result = TrendsResult::default();
+    for acc in parts {
+        result.merge(acc.finish());
     }
     Ok((starts.as_ref().clone(), result))
 }

@@ -43,6 +43,13 @@ pub struct Config {
     pub pushdown_filters: bool,
     /// `LA_QUERY_SQL_MAX_ROWS`
     pub sql_max_rows: usize,
+    /// `LA_QUERY_PARALLEL_MIN_ROWS`: ordered operators (funnel, retention,
+    /// weekly/monthly unique counts) split the person-key space into
+    /// `partitions` ranges once a query covers at least this many rows.
+    pub parallel_min_rows: u64,
+    /// Explicit person-key split points (tests and experiments); normally the
+    /// split points come from row-group statistics.
+    pub person_split: Vec<String>,
 }
 
 impl Default for Config {
@@ -66,6 +73,8 @@ impl Default for Config {
             slow_query: Duration::from_secs(5),
             pushdown_filters: true,
             sql_max_rows: 10_000,
+            parallel_min_rows: 1_000_000,
+            person_split: Vec::new(),
         }
     }
 }
@@ -112,6 +121,8 @@ impl Config {
             slow_query: ms("LA_QUERY_SLOW_MS", d.slow_query)?,
             pushdown_filters: pushdown,
             sql_max_rows: num("LA_QUERY_SQL_MAX_ROWS", d.sql_max_rows)?.clamp(1, 10_000),
+            parallel_min_rows: num("LA_QUERY_PARALLEL_MIN_ROWS", d.parallel_min_rows)?,
+            person_split: Vec::new(),
         })
     }
 }

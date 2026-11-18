@@ -160,3 +160,46 @@ impl Rng {
         }
     }
 }
+
+/// Random native batches for projects 7 and 8: a dozen devices, events spread
+/// over two days, verbatim re-sends of earlier events (same uuid and ts), some
+/// batches already carrying a user id, and devices identifying as one fixed
+/// user each (no conflicting links).
+pub fn random_segments(rng: &mut Rng, n_segments: usize) -> Vec<Vec<Entry>> {
+    let mut next_id = 1u64;
+    let mut sent: std::collections::HashMap<(u32, String), Vec<(u64, i64)>> = Default::default();
+    (0..n_segments)
+        .map(|si| {
+            (0..6)
+                .map(|bi| {
+                    let project = 7 + rng.below(2) as u32;
+                    let anon = format!("dev-{}", rng.below(12));
+                    // A device that identified sends its user id from then on.
+                    let user = if rng.below(4) == 0 { format!("user-{}", rng.below(5)) } else { String::new() };
+                    let recv = t0() + (si * 6 + bi) as i64 * 1000;
+                    let mut recs = Vec::new();
+                    let earlier = sent.entry((project, anon.clone())).or_default();
+                    for _ in 0..(1 + rng.below(8)) {
+                        // Now and then re-send an earlier event of this device verbatim (same uuid, same ts).
+                        if !earlier.is_empty() && rng.below(4) == 0 {
+                            let (id, ts) = earlier[rng.below(earlier.len() as u64) as usize];
+                            recs.push(event(id, ts, "tap", vec![prop("n", Value::Int(id as i64))]));
+                            continue;
+                        }
+                        let ts = recv - rng.below(30 * HOUR_MS as u64) as i64;
+                        recs.push(event(next_id, ts, "tap", vec![prop("n", Value::Int(next_id as i64))]));
+                        earlier.push((next_id, ts));
+                        next_id += 1;
+                    }
+                    // Each device identifies as one fixed user (no conflicting links).
+                    if rng.below(5) == 0 {
+                        let u = format!("owner-of-{anon}");
+                        recs.push(identify(next_id, recv - 1, &u, vec![]));
+                        next_id += 1;
+                    }
+                    native(project, recv, &header(&anon, &user, 0), &recs)
+                })
+                .collect()
+        })
+        .collect()
+}

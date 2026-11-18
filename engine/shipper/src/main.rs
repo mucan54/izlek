@@ -27,7 +27,8 @@ LA_METRICS_ADDR, LA_LOG); see engine/shipper/README.md.";
 
 fn init_logging() {
     let filter = std::env::var("LA_LOG").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "info".to_owned());
-    let filter = tracing_subscriber::EnvFilter::try_new(&filter).unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let filter =
+        tracing_subscriber::EnvFilter::try_new(&filter).unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     // Structured JSON, one object per line. Event content is never logged:
     // log fields are identifiers, counts and object keys only.
     let _ = tracing_subscriber::fmt().json().with_env_filter(filter).with_writer(std::io::stdout).try_init();
@@ -47,7 +48,8 @@ fn holder(prefix: &str) -> String {
 }
 
 async fn start_metrics(registry: Arc<Registry>, default_addr: &str) {
-    let addr = std::env::var("LA_METRICS_ADDR").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| default_addr.to_owned());
+    let addr =
+        std::env::var("LA_METRICS_ADDR").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| default_addr.to_owned());
     if addr == "off" {
         return;
     }
@@ -95,10 +97,15 @@ fn parse_args() -> Result<Args, String> {
         Some(a) if !a.starts_with('-') => it.next().unwrap_or_default(),
         _ => "ship".to_owned(),
     };
+    if !["ship", "compact", "rebuild", "help"].contains(&mode.as_str()) {
+        return Err(format!("unknown mode {mode:?}"));
+    }
     let mut args = Args { mode, flags: Vec::new(), values: Default::default() };
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--once" | "--no-lease" | "--with-side-tables" | "--force" | "--abort" | "--help" | "-h" => args.flags.push(a),
+            "--once" | "--no-lease" | "--with-side-tables" | "--force" | "--abort" | "--help" | "-h" => {
+                args.flags.push(a)
+            }
             "--from" | "--to" | "--project" => {
                 let v = it.next().ok_or_else(|| format!("{a} needs a value"))?;
                 args.values.insert(a, v);
@@ -118,7 +125,11 @@ async fn run(args: Args) -> Result<(), String> {
             ctx.holder = holder("ship");
             if has("--once") {
                 let plans = ship::ship_once(&ctx).await.map_err(|e| e.to_string())?;
-                tracing::info!(plans = plans.len(), records = plans.iter().map(|p| p.records_out).sum::<u64>(), "ship --once done");
+                tracing::info!(
+                    plans = plans.len(),
+                    records = plans.iter().map(|p| p.records_out).sum::<u64>(),
+                    "ship --once done"
+                );
                 return Ok(());
             }
             start_metrics(ctx.metrics.clone(), "0.0.0.0:9102").await;
@@ -127,9 +138,10 @@ async fn run(args: Args) -> Result<(), String> {
         "compact" => {
             let mut ctx = la_compactor::Ctx::new(store, la_compactor::CompactorConfig::from_env());
             ctx.holder = holder("compact");
-            let shards = std::env::var("LA_COMPACTOR_SHARDS").ok().filter(|v| !v.is_empty() && v != "*").map(|v| {
-                v.split(',').filter_map(|s| s.trim().parse().ok()).collect::<Vec<u32>>()
-            });
+            let shards = std::env::var("LA_COMPACTOR_SHARDS")
+                .ok()
+                .filter(|v| !v.is_empty() && v != "*")
+                .map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect::<Vec<u32>>());
             let opts = RunOptions { once: has("--once"), shards, no_lease: has("--no-lease") };
             if !opts.once {
                 start_metrics(ctx.metrics.clone(), "0.0.0.0:9103").await;

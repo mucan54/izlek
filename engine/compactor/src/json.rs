@@ -84,7 +84,8 @@ mod tests {
 
     #[test]
     fn string_escaping_matches_serde() {
-        for s in ["", "plain", "q\"uote", "back\\slash", "nl\n\r\t", "\u{1}\u{1f}", "ünï©ödé 🎉", "\u{08}\u{0c}"] {
+        for s in ["", "plain", "q\"uote", "back\\slash", "nl\n\r\t", "\u{1}\u{1f}", "ünï©ödé 🎉", "\u{08}\u{0c}"]
+        {
             assert_eq!(json_string(s), serde_json::to_string(s).unwrap(), "{s:?}");
         }
     }

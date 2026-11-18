@@ -473,7 +473,7 @@ impl FunnelAcc {
 #[inline]
 fn advance(chain: &mut Chain, stats: &mut [StepStat], steps: usize, window: i64, ts: i64, mask: u32, starts: bool) {
     // High to low so one row never counts for two consecutive steps.
-    for j in (1..steps).rev() {
+    for j in 1..steps {
         if mask >> j & 1 == 0 {
             continue;
         }

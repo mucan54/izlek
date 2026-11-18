@@ -21,7 +21,9 @@ pub enum Tick {
     /// Nothing is waiting.
     Idle,
     /// Segments are waiting for the batch window to close.
-    Waiting { pending: usize },
+    Waiting {
+        pending: usize,
+    },
     Executed(Box<PlanOutcome>),
     /// The newest plan is an unfinished rebuild plan: shipping is fenced
     /// until `la-shipper rebuild` completes (or is aborted).

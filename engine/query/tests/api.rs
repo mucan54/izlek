@@ -440,8 +440,20 @@ async fn sql() {
     let d1 = day_ms(DAY1);
     let u = la_codec::ids::hex32(&uuid(102));
     assert_eq!(v["rows"][0], json!([d1 + 2 * H, u, u, null, "9007199254740993", 1.5, 0, "false", "x1", 10.0, null]));
-    assert_eq!(v["rows"][1][9], Value::Null, "promoted value is in the column, not in props");
+    assert_eq!(v["rows"][1][9], json!(5.5), "prop_num() follows the value into the promoted column");
     assert_eq!(v["rows"][1][10], json!(5.5));
+    // …also behind an alias, in filters and aggregates; persons.props is left alone.
+    let v = app
+        .ok(
+            KEY,
+            "/q/sql",
+            q("SELECT sum(prop_num(e.props, 'amount')), count(prop(e.props, 'amount')), max(prop(p.props, 'amount')) \
+               FROM events e LEFT JOIN persons p ON p.person_key = e.person_key WHERE prop_num(e.props, 'amount') > 1"),
+        )
+        .await;
+    assert_eq!(v["rows"], json!([[15.5, 2, null]]));
+    let v = app.ok(KEY, "/q/sql", q("SELECT prop(props, 'amount') FROM events WHERE event = 'purchase' ORDER BY ts")).await;
+    assert_eq!(v["rows"], json!([["10"], ["5.5"]]));
     // Persons table, joins, CTEs, subqueries, window functions over the declared order.
     let v = app
         .ok(
@@ -647,6 +659,12 @@ async fn result_cache_follows_manifest_versions() {
     let after = app.ok(KEY, "/q/trends", body.clone()).await;
     assert_eq!(after["meta"]["cached"], false);
     assert_eq!(after["series"][0]["values"], json!([2, 1]), "deleted person is gone immediately");
+    // …including their person properties.
+    let sql = with(range(), json!({"sql": "SELECT person_key FROM persons ORDER BY 1"}));
+    assert_eq!(app.ok(KEY, "/q/sql", sql.clone()).await["rows"], json!([["u:alice"], ["u:bob"]]));
+    tombstone(&store, A, 100, &["u:bob"], &[]).await;
+    assert_eq!(app.ok(KEY, "/q/sql", sql).await["rows"], json!([["u:alice"]]));
+    assert_eq!(app.ok(KEY, "/q/schema", json!({})).await["person_props"], json!(["plan"]));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -718,6 +736,11 @@ async fn memory_budget_is_enforced() {
     assert_eq!((r.status, r.code().as_str()), (StatusCode::UNPROCESSABLE_ENTITY, "memory_limit"), "{}", String::from_utf8_lossy(&r.bytes));
     let r = app.post(KEY, "/q/sql", json!({"from": DAY1, "to": DAY1, "sql": "SELECT props, count(*) FROM events GROUP BY 1 ORDER BY 1"})).await;
     assert_eq!((r.status, r.code().as_str()), (StatusCode::UNPROCESSABLE_ENTITY, "memory_limit"), "{}", String::from_utf8_lossy(&r.bytes));
+    // 408 from a query that is actually running (not merely queued): its tasks are cancelled.
+    let cfg = la_query::config::Config { timeout: Duration::from_millis(1), ..test_config() };
+    let hasty = app_with(&store, cfg).await;
+    let r = hasty.post(KEY, "/q/sql", json!({"from": DAY1, "to": DAY1, "sql": "SELECT props, count(*) FROM events GROUP BY 1 ORDER BY 1"})).await;
+    assert_eq!((r.status, r.code().as_str()), (StatusCode::REQUEST_TIMEOUT, "timeout"));
     // The same queries fit in the default budget.
     let roomy = app_with(&store, test_config()).await;
     let v = roomy.ok(KEY, "/q/trends", json!({"from": DAY1, "to": DAY1, "series": [{"agg": "count"}], "breakdown": "props.k", "breakdown_limit": 3})).await;

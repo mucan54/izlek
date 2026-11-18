@@ -112,7 +112,10 @@ impl Staged {
 
 #[derive(Debug)]
 pub enum Outcome {
-    Committed { manifest: DayManifest, added: Vec<FileEntry> },
+    Committed {
+        manifest: DayManifest,
+        added: Vec<FileEntry>,
+    },
     /// Nothing needed to change; the manifest is the one that was current.
     Unchanged(DayManifest),
     /// An input is no longer listed — somebody else already replaced it.
@@ -124,7 +127,21 @@ pub enum Outcome {
 /// Fetches one object for merging: small ones into memory, large ones into
 /// the spool directory. `None` when the object does not exist.
 pub async fn fetch_input(ctx: &Ctx, key: &str, size: u64, spool: &Path, name: &str) -> Result<Option<InputData>> {
-    if size <= ctx.cfg.mem_input_bytes {
+    fetch_input_budgeted(ctx, key, size, spool, name, &mut 0).await
+}
+
+/// Like [`fetch_input`], but all inputs of one job together keep at most
+/// `MEM_INPUT_FILES × mem_input_bytes` in memory (`in_memory` is the running total).
+async fn fetch_input_budgeted(
+    ctx: &Ctx,
+    key: &str,
+    size: u64,
+    spool: &Path,
+    name: &str,
+    in_memory: &mut u64,
+) -> Result<Option<InputData>> {
+    if size <= ctx.cfg.mem_input_bytes && *in_memory + size <= MEM_INPUT_FILES * ctx.cfg.mem_input_bytes {
+        *in_memory += size;
         return Ok(ctx.store.get(key).await?.map(InputData::Mem));
     }
     let os = ctx.store.object_store();
@@ -194,8 +211,10 @@ pub async fn stage(ctx: &Ctx, env: &Arc<ProjectEnv>, day: &str, groups: Vec<Grou
         let dir = staged.spool.path().join(format!("g{gi}"));
         std::fs::create_dir_all(&dir)?;
         let mut inputs = Vec::with_capacity(group.inputs.len());
+        let mut in_memory = 0u64;
         for (i, f) in group.inputs.iter().enumerate() {
-            match fetch_input(ctx, &f.key, f.bytes, &dir, &format!("in-{i:04}.parquet")).await? {
+            let name = format!("in-{i:04}.parquet");
+            match fetch_input_budgeted(ctx, &f.key, f.bytes, &dir, &name, &mut in_memory).await? {
                 Some(data) => inputs.push(MergeInput { name: f.key.clone(), data }),
                 None => return Ok(None),
             }
@@ -243,6 +262,9 @@ pub async fn stage_local_runs(
 }
 
 const MAX_ATTEMPTS: u32 = 24;
+
+/// Compressed input bytes one job may hold in memory, in units of `mem_input_bytes`.
+const MEM_INPUT_FILES: u64 = 4;
 
 async fn delete_all(store: &Store, keys: &[String]) {
     for k in keys {

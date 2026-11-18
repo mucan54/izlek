@@ -23,8 +23,8 @@ arrow.workspace = true
 datafusion.workspace = true
 tokio.workspace = true
 futures.workspace = true
-serde.workspace = true
 serde_json.workspace = true
+chrono.workspace = true
 rand.workspace = true
 tempfile.workspace = true
 clap = { version = "4", features = ["derive"] }

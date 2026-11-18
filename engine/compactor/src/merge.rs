@@ -136,6 +136,8 @@ struct Cols {
     user: StringArray,
     event: StringArray,
     props: StringArray,
+    /// `key` promoted to a column (then it is no longer in `props`).
+    p_key: Option<StringArray>,
 }
 
 impl Cols {
@@ -148,7 +150,20 @@ impl Cols {
             user: typed::<StringArray>(batch, "user_id")?.clone(),
             event: typed::<StringArray>(batch, "event")?.clone(),
             props: typed::<StringArray>(batch, "props")?.clone(),
+            p_key: batch.column_by_name("p_key").and_then(|c| c.as_any().downcast_ref::<StringArray>()).cloned(),
         })
+    }
+
+    /// Object key a `session_replay_chunk` row points at (`props.key`,
+    /// wherever the schema currently stores it).
+    fn replay_key(&self, row: usize) -> Option<String> {
+        if let Some(col) = self.p_key.as_ref().filter(|c| c.is_valid(row)) {
+            return Some(col.value(row).to_owned());
+        }
+        match crate::json::object_member(self.props.value(row), "key") {
+            Some(serde_json::Value::String(k)) => Some(k),
+            _ => None,
+        }
     }
 }
 
@@ -182,21 +197,33 @@ fn key_columns(batch: &RecordBatch) -> Result<Vec<ArrayRef>> {
 }
 
 /// Sorts batches (same schema) by `(person_key, ts, uuid, recv_ts)` and
-/// re-chunks them.
-pub fn sort_batches(schema: &SchemaRef, batches: &[RecordBatch], batch_rows: usize) -> Result<Vec<RecordBatch>> {
+/// re-chunks them. Consumes its input so that at most two copies of the rows
+/// are alive at any time.
+pub fn sort_batches(schema: &SchemaRef, batches: Vec<RecordBatch>, batch_rows: usize) -> Result<Vec<RecordBatch>> {
     if batches.is_empty() {
         return Ok(Vec::new());
     }
-    let all = concat_batches(schema, batches)?;
+    let all = concat_batches(schema, &batches)?;
+    drop(batches);
     let opts = Some(SortOptions { descending: false, nulls_first: true });
-    let cols: Vec<SortColumn> = key_columns(&all)?.into_iter().map(|values| SortColumn { values, options: opts }).collect();
+    let cols: Vec<SortColumn> =
+        key_columns(&all)?.into_iter().map(|values| SortColumn { values, options: opts }).collect();
     let idx = lexsort_to_indices(&cols, None)?;
-    let sorted: Vec<ArrayRef> = all.columns().iter().map(|c| take(c, &idx, None)).collect::<std::result::Result<_, _>>()?;
+    drop(cols);
+    let rows = all.num_rows();
+    // Column by column, releasing each unsorted column as soon as it is copied.
+    let mut sorted: Vec<ArrayRef> = Vec::with_capacity(all.num_columns());
+    let mut unsorted: Vec<ArrayRef> = all.columns().to_vec();
+    drop(all);
+    unsorted.reverse();
+    while let Some(col) = unsorted.pop() {
+        sorted.push(take(&col, &idx, None)?);
+    }
     let sorted = RecordBatch::try_new(schema.clone(), sorted)?;
     let mut out = Vec::new();
     let mut at = 0;
-    while at < sorted.num_rows() {
-        let n = batch_rows.min(sorted.num_rows() - at);
+    while at < rows {
+        let n = batch_rows.min(rows - at);
         out.push(sorted.slice(at, n));
         at += n;
     }
@@ -311,7 +338,7 @@ impl<'a> Merger<'a> {
 
     fn spill_moved(&mut self) -> Result<()> {
         let schema = self.norm.schema().clone();
-        let sorted = sort_batches(&schema, &std::mem::take(&mut self.moved), self.p.batch_rows)?;
+        let sorted = sort_batches(&schema, std::mem::take(&mut self.moved), self.p.batch_rows)?;
         self.moved_rows = 0;
         if sorted.is_empty() {
             return Ok(());
@@ -422,7 +449,7 @@ impl<'a> Merger<'a> {
     fn finalize_moved(&mut self) -> Result<()> {
         self.moved_done = true;
         let schema = self.norm.schema().clone();
-        let sorted = sort_batches(&schema, &std::mem::take(&mut self.moved), self.p.batch_rows)?;
+        let sorted = sort_batches(&schema, std::mem::take(&mut self.moved), self.p.batch_rows)?;
         self.moved_rows = 0;
         if !sorted.is_empty() {
             self.add_input(InputData::Batches(sorted), false)?;
@@ -558,10 +585,7 @@ impl<'a> Merger<'a> {
             } else if self.p.tombstones.matches(&self.person, c.cols.anon.value(row), user) {
                 self.stats.tombstoned += 1;
                 if c.cols.event.value(row) == REPLAY_CHUNK_EVENT {
-                    if let Some(serde_json::Value::String(k)) = crate::json::object_member(c.cols.props.value(row), "key")
-                    {
-                        self.replay_keys.push(k);
-                    }
+                    self.replay_keys.extend(c.cols.replay_key(row));
                 }
             } else {
                 if self.out.is_none() {
@@ -705,7 +729,16 @@ mod tests {
         let rows = read_all(&res, &[]).remove(0);
         assert_eq!(rows.len(), 71);
         assert!(rows.windows(2).all(|w| w[0].sort_key_cmp(&w[1]).is_lt()));
-        assert_eq!(res.stats, MergeStats { rows_in: 92, rows_out: 71, duplicates: 21, bytes_out: res.stats.bytes_out, ..Default::default() });
+        assert_eq!(
+            res.stats,
+            MergeStats {
+                rows_in: 92,
+                rows_out: 71,
+                duplicates: 21,
+                bytes_out: res.stats.bytes_out,
+                ..Default::default()
+            }
+        );
         let e = &res.files[0].entry;
         assert_eq!((e.rows, e.level, e.schema_version), (71, 1, 3));
         assert_eq!((e.min_person.as_str(), e.max_person.as_str()), ("u:00", "u:zz"));
@@ -815,6 +848,12 @@ mod tests {
         let res = merge_inputs(vec![file(&mut a, &[])], &p).unwrap();
         assert_eq!(keys(&read_all(&res, &[])[0]), [("u:keep".to_owned(), 4, 4)]);
         assert_eq!(res.stats.tombstoned, 4);
+        assert_eq!(res.replay_keys, ["replay/p=1/d=2026-11-18/aa/000000.bin.zst"]);
+        // The same with `key` promoted to a column: the object is still found.
+        let cols = vec![PromotedColumn { key: "key".into(), ty: PropType::String, since: 1 }];
+        let sub = tempfile::tempdir().unwrap();
+        let p = params(sub.path(), &id, &tombs, &cols);
+        let res = merge_inputs(vec![file(&mut a, &[])], &p).unwrap();
         assert_eq!(res.replay_keys, ["replay/p=1/d=2026-11-18/aa/000000.bin.zst"]);
         // Everything deleted → no output file at all.
         let mut only = vec![row("u:gone", "dev", 1, 1)];

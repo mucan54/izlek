@@ -5,13 +5,13 @@ use crate::filter::{Filter, Ref};
 use crate::funnel::{FunnelAcc, FunnelResult, FunnelSpec, Order, StepStat};
 use crate::request::{EventSel, Obj};
 use crate::scan::ScanRequest;
-use crate::session::{merged_stream, QueryCx};
+use crate::session::QueryCx;
 use arrow::array::{Array, AsArray, BooleanArray, RecordBatch};
 use arrow::datatypes::TimestampMillisecondType;
 use datafusion::logical_expr::Expr;
 use datafusion::prelude::ident;
-use futures::StreamExt;
 use serde_json::{json, Value};
+use std::sync::Arc;
 
 pub const MAX_STEPS: usize = 20;
 const DEFAULT_WINDOW_SECONDS: u64 = 7 * 86_400;
@@ -124,17 +124,24 @@ pub fn feed(acc: &mut FunnelAcc, batch: &RecordBatch, steps: usize, breakdown: b
 }
 
 pub async fn compute(cx: &QueryCx, req: &FunnelRequest) -> ApiResult<FunnelResult> {
-    let plan = cx.plan(&req.scan(cx))?;
-    let mut stream = merged_stream(plan, &["person_key", "ts"], cx.task_ctx())?;
-    let budget = cx.reserve("funnel");
+    let budget = Arc::new(cx.reserve("funnel"));
     let spec = req.spec();
-    let mut acc = FunnelAcc::new(spec);
-    while let Some(batch) = stream.next().await {
-        feed(&mut acc, &batch?, spec.steps, spec.breakdown)?;
-        budget.grow(acc.take_new_bytes())?;
-        tokio::task::consume_budget().await;
+    let parts = cx
+        .fold_ordered(
+            &req.scan(cx),
+            &["person_key", "ts"],
+            || FunnelAcc::new(spec),
+            move |acc: &mut FunnelAcc, batch| {
+                feed(acc, batch, spec.steps, spec.breakdown)?;
+                budget.grow(acc.take_new_bytes())
+            },
+        )
+        .await?;
+    let mut result = FunnelResult::empty(spec.steps);
+    for acc in parts {
+        result.merge(acc.finish());
     }
-    Ok(acc.finish())
+    Ok(result)
 }
 
 fn steps_json(req: &FunnelRequest, stats: &[StepStat]) -> Value {

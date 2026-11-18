@@ -734,7 +734,6 @@ pub fn plan_scan(cx: &ScanContext, state: &dyn Session, req: &ScanRequest) -> Re
             files += n;
         }
     }
-    cx.stats.files.fetch_add(files as u64, Ordering::Relaxed);
     if units.is_empty() {
         units.push(Arc::new(EmptyExec::new(Arc::clone(&out_schema))));
         weights.push(0);
@@ -873,25 +872,30 @@ impl TableProvider for EventsTable {
             indices.iter().map(|i| (ident(self.schema.field(*i).name().as_str()), self.schema.field(*i).name().clone())).collect();
         let filters = filters.iter().cloned().map(unqualify).collect::<Result<Vec<_>>>()?;
         let req = ScanRequest { exprs, filters, ordered: self.ordered.load(Ordering::Relaxed) };
-        Ok(plan_scan(&self.cx, state, &req)?)
+        let plan = plan_scan(&self.cx, state, &req)?;
+        self.cx.stats.files.fetch_add(plan.files() as u64, Ordering::Relaxed);
+        Ok(plan)
     }
 }
 
 /// `persons(person_key, props)` for SQL: current properties as one JSON
 /// object per person, materialized only when the table is actually scanned.
+/// Persons named by a tombstone are left out (design §10.5: excluded from
+/// results immediately, before the compactor has removed their rows).
 #[derive(Debug)]
 pub struct PersonsTable {
     table: Arc<la_core::persons::PersonTable>,
+    hidden: std::collections::HashSet<String>,
     schema: SchemaRef,
 }
 
 impl PersonsTable {
-    pub fn new(table: Arc<la_core::persons::PersonTable>) -> Self {
+    pub fn new(snap: &Snapshot) -> Self {
         let schema = Arc::new(Schema::new(vec![
             Field::new("person_key", DataType::Utf8, false),
             Field::new("props", DataType::Utf8, false),
         ]));
-        Self { table, schema }
+        Self { table: snap.persons(), hidden: snap.tombstone_set(0).person_keys, schema }
     }
 }
 
@@ -912,7 +916,7 @@ impl TableProvider for PersonsTable {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        let mut keys: Vec<&String> = self.table.iter().map(|(k, _)| k).collect();
+        let mut keys: Vec<&String> = self.table.iter().map(|(k, _)| k).filter(|k| !self.hidden.contains(*k)).collect();
         keys.sort();
         let mut pk = StringBuilder::new();
         let mut props = StringBuilder::new();

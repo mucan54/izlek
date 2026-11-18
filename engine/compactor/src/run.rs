@@ -210,62 +210,85 @@ pub struct RunOptions {
 pub async fn run(ctx: Ctx, opts: RunOptions, mut shutdown: tokio::sync::watch::Receiver<bool>) -> Result<()> {
     let mut keepers: HashMap<String, LeaseKeeper> = HashMap::new();
     let mut last_full = 0i64;
+    tracing::info!(store = ctx.store.describe(), holder = %ctx.holder, "compactor started");
     loop {
-        let now = la_core::time::now_ms();
-        let shards = Shards::load(&ctx.store).await?;
-        let map = shards.map_at(now);
-        let wanted: Vec<u32> =
-            (0..map.shards.max(1)).filter(|s| opts.shards.as_ref().is_none_or(|l| l.contains(s))).collect();
-        let mut owned: HashSet<u32> = HashSet::new();
-        for s in &wanted {
-            let shardkey = format!("{}-{}", map.version, s);
-            if opts.no_lease {
-                owned.insert(*s);
-                continue;
+        let pass = run_pass(&ctx, &opts, &mut keepers, &mut last_full).await;
+        match pass {
+            Ok(report) if opts.once => {
+                return if report.errors == 0 {
+                    Ok(())
+                } else {
+                    Err(la_core::Error::invalid(format!("{} project passes failed", report.errors)))
+                };
             }
-            if !keepers.contains_key(&shardkey) {
-                let lease = Lease::new(ctx.store.clone(), &format!("compactor-{shardkey}"), &ctx.holder);
-                keepers.insert(shardkey.clone(), LeaseKeeper::start(lease, Duration::from_millis(RENEW_EVERY_MS)).await);
+            Ok(_) => {}
+            Err(e) if opts.once => return Err(e),
+            Err(e) => {
+                ctx.metrics.inc("errors_total", &[], 1);
+                tracing::error!(error = %e, "compactor pass failed; retrying next cycle");
             }
-            let held = keepers.get(&shardkey).is_some_and(LeaseKeeper::held);
-            ctx.metrics.set("lease_held", &[("shard", &shardkey)], if held { 1.0 } else { 0.0 });
-            if held {
-                owned.insert(*s);
-            }
-        }
-        // Leases of shard maps that are no longer current are released.
-        keepers.retain(|k, _| k.starts_with(&format!("{}-", map.version)));
-
-        if owned.is_empty() {
-            tracing::info!("no compactor lease held; standing by");
-        } else {
-            let full = opts.once || now - last_full >= ctx.cfg.full_scan_interval_ms;
-            let global = owned.contains(&0);
-            let owns = |p: u32| owned.contains(&la_codec::murmur3::shard_of(p, map.shards.max(1)));
-            let report = cycle(&ctx, now, full, global, &owns).await?;
-            if full {
-                last_full = now;
-            }
-            tracing::info!(
-                projects = report.projects,
-                compactions = report.compactions,
-                gc_deleted = report.gc_deleted,
-                days_expired = report.days_expired,
-                tombstones_pending = report.tombstones_pending,
-                errors = report.errors,
-                full,
-                "compactor cycle"
-            );
-        }
-        if opts.once {
-            return Ok(());
         }
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_millis(ctx.cfg.interval_ms)) => {}
-            _ = shutdown.changed() => return Ok(()),
+            _ = shutdown.changed() => {}
         }
         if *shutdown.borrow() {
+            tracing::info!("compactor stopping");
             return Ok(());
         }
     }
+}
+
+async fn run_pass(
+    ctx: &Ctx,
+    opts: &RunOptions,
+    keepers: &mut HashMap<String, LeaseKeeper>,
+    last_full: &mut i64,
+) -> Result<CycleReport> {
+    let now = la_core::time::now_ms();
+    let shards = Shards::load(&ctx.store).await?;
+    let map = shards.map_at(now);
+    let wanted: Vec<u32> =
+        (0..map.shards.max(1)).filter(|s| opts.shards.as_ref().is_none_or(|l| l.contains(s))).collect();
+    let mut owned: HashSet<u32> = HashSet::new();
+    for s in &wanted {
+        let shardkey = format!("{}-{}", map.version, s);
+        if opts.no_lease {
+            owned.insert(*s);
+            continue;
+        }
+        if !keepers.contains_key(&shardkey) {
+            let lease = Lease::new(ctx.store.clone(), &format!("compactor-{shardkey}"), &ctx.holder);
+            keepers.insert(shardkey.clone(), LeaseKeeper::start(lease, Duration::from_millis(RENEW_EVERY_MS)).await);
+        }
+        let held = keepers.get(&shardkey).is_some_and(LeaseKeeper::held);
+        ctx.metrics.set("lease_held", &[("shard", &shardkey)], if held { 1.0 } else { 0.0 });
+        if held {
+            owned.insert(*s);
+        }
+    }
+    // Leases of shard maps that are no longer current are let go.
+    keepers.retain(|k, _| k.starts_with(&format!("{}-", map.version)));
+    if owned.is_empty() {
+        tracing::info!("no compactor lease held; standing by");
+        return Ok(CycleReport::default());
+    }
+    let full = opts.once || now - *last_full >= ctx.cfg.full_scan_interval_ms;
+    let global = owned.contains(&0);
+    let owns = |p: u32| owned.contains(&la_codec::murmur3::shard_of(p, map.shards.max(1)));
+    let report = cycle(ctx, now, full, global, &owns).await?;
+    if full {
+        *last_full = now;
+    }
+    tracing::info!(
+        projects = report.projects,
+        compactions = report.compactions,
+        gc_deleted = report.gc_deleted,
+        days_expired = report.days_expired,
+        tombstones_pending = report.tombstones_pending,
+        errors = report.errors,
+        full,
+        "compactor cycle"
+    );
+    Ok(report)
 }

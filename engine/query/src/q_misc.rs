@@ -49,7 +49,8 @@ pub fn schema_json(schema: &ProjectSchema, snap: &Snapshot) -> Value {
 
     let mut person_props: BTreeSet<&str> = BTreeSet::new();
     if let Some(table) = &snap.persons {
-        for (_, p) in table.iter() {
+        let hidden = snap.tombstone_set(0).person_keys;
+        for (_, p) in table.iter().filter(|(k, _)| !hidden.contains(*k)) {
             for k in p.keys() {
                 if person_props.len() < MAX_NAMES || person_props.contains(k.as_str()) {
                     person_props.insert(k);

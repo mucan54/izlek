@@ -146,3 +146,15 @@ LA_UI_DIR=/usr/share/la/ui
 LA_COOKIE_SECURE=true
 LA_STORE_URL / LA_S3_*                     # manifest.md §0
 ```
+
+## 12. Netleştirmeler (UI ile backend arasında bağlayıcı)
+
+- `GET /api/me` yanıtı `csrf` alanını da taşır. `X-LA-CSRF`, oturum çereziyle gelen **her** GET-dışı istekte zorunludur (`/q/*` vekil POST'ları, `evaluate` ve logout dahil); `login` ve `setup` muaftır.
+- Liste uçları çıplak JSON dizisi döner. Silme uçları boş gövdeyle `200`/`204` dönebilir.
+- `401` yalnızca "oturum yok/bitti" demektir. Yanlış mevcut parola (`/api/me/password`, `/api/me/totp/disable`) → `403`; hatalı TOTP kodu (`/api/me/totp/enable`) → `400`.
+- Rol tablosunda geçmeyen okumalar: üye listesi = org'un her üyesi; denetim kaydı = `admin`+; token listesi = `viewer`; anahtar listesi = `admin`; silme isteği listesi = `admin`.
+- `POST /api/projects` yalnızca `Project` döner (otomatik token `/tokens`'tan okunur). Kapatılmış projeler `GET /api/projects`'te görünmez.
+- Denetim kaydı sayfalaması: `before` = alınan son satırın `id`'si (hariç).
+- Flag `PUT` gövdesi `{key, name, description, enabled, rules, default}`'tir; `salt` ve `version` istemciden alınmaz. `default: false` ≡ `null`.
+- Insight `query` alanı **opak** JSON olarak saklanır (`range`, `ui` gibi sorgu servisinin bilmediği alanlar içerebilir); control plane içini doğrulamaz. Dashboard öğeleri 12 sütunlu ızgarada tam sayı `x, y, w, h` taşır.
+- Kimlikler (kullanıcı, org, insight, dashboard, anahtar) istemci için opaktır.

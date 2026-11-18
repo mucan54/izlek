@@ -55,7 +55,7 @@ impl Default for CompactorConfig {
             target_file_bytes: 512 * MB,
             max_inputs: 32,
             batch_rows: 4096,
-            max_moved_rows: 1_000_000,
+            max_moved_rows: 200_000,
             max_person_uuids: 2_000_000,
             mem_input_bytes: 32 * MB,
             gc_grace_ms: 24 * HOUR_MS,

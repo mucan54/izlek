@@ -134,8 +134,9 @@ pub async fn day_rows(
         if file.len() as u64 != f.rows {
             return Err(Error::invalid(format!("{}: manifest says {} rows, file has {}", f.key, f.rows, file.len())));
         }
-        if !file.windows(2).all(|w| (w[0].person_key.as_bytes(), w[0].ts, w[0].uuid) <= (w[1].person_key.as_bytes(), w[1].ts, w[1].uuid))
-        {
+        if !file.windows(2).all(|w| {
+            (w[0].person_key.as_bytes(), w[0].ts, w[0].uuid) <= (w[1].person_key.as_bytes(), w[1].ts, w[1].uuid)
+        }) {
             return Err(Error::invalid(format!("{} is not sorted by (person_key, ts, uuid)", f.key)));
         }
         rows.extend(file);

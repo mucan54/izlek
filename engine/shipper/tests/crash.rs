@@ -26,7 +26,7 @@ fn first_segments() -> Vec<(String, Vec<Entry>)> {
         let recs: Vec<_> = (0..100)
             .map(|i| {
                 let id = b * 100 + i;
-                let ts = if id % 7 == 0 { yesterday - id as i64 } else { t0() - 5000 - id as i64 };
+                let ts = if id.is_multiple_of(7) { yesterday - id as i64 } else { t0() - 5000 - id as i64 };
                 event(id, ts, "tap", vec![prop("plan", s("pro")), prop("n", Value::Int(id as i64))])
             })
             .collect();
@@ -36,19 +36,34 @@ fn first_segments() -> Vec<(String, Vec<Entry>)> {
         7,
         t0(),
         &header("dev-1", "", 0),
-        &[identify(5001, t0() - 100, "alice", vec![prop("tier", s("gold"))]), set_person(5002, t0() - 50, vec![prop("x", Value::Int(1))])],
+        &[
+            identify(5001, t0() - 100, "alice", vec![prop("tier", s("gold"))]),
+            set_person(5002, t0() - 50, vec![prop("x", Value::Int(1))]),
+        ],
     ));
     let b = vec![
-        native(8, t0(), &header("other", "bob", 0), &[event(1, t0() - 1, "e", vec![]), event(2, yesterday, "e", vec![])]),
-        posthog(8, t0(), r#"{"event":"$identify","distinct_id":"carol","properties":{"$anon_distinct_id":"c-anon","$set":{"k":"v"}}}"#),
+        native(
+            8,
+            t0(),
+            &header("other", "bob", 0),
+            &[event(1, t0() - 1, "e", vec![]), event(2, yesterday, "e", vec![])],
+        ),
+        posthog(
+            8,
+            t0(),
+            r#"{"event":"$identify","distinct_id":"carol","properties":{"$anon_distinct_id":"c-anon","$set":{"k":"v"}}}"#,
+        ),
         native(7, t0(), &header("dev-2", "", 0), &[identify(5003, t0() - 90, "dave", vec![])]),
     ];
     vec![(seg_key(10, "ing-01", 1), a), (seg_key(10, "ing-02", 1), b)]
 }
 
 fn second_segment() -> (String, Vec<Entry>) {
-    let recs: Vec<_> =
-        (0..50).map(|i| event(9000 + i, t0() - i as i64, "tap", vec![prop("plan", s("free")), prop("n", Value::Int(i as i64))])).collect();
+    let recs: Vec<_> = (0..50)
+        .map(|i| {
+            event(9000 + i, t0() - i as i64, "tap", vec![prop("plan", s("free")), prop("n", Value::Int(i as i64))])
+        })
+        .collect();
     (seg_key(11, "ing-01", 2), vec![native(7, t0() + 1, &header("dev-3", "", 0), &recs)])
 }
 
@@ -59,8 +74,7 @@ async fn seed(store: &Store) {
 }
 
 async fn full_snapshot(store: &Store) -> (Snapshot, Snapshot, Vec<String>) {
-    let mut markers: Vec<String> =
-        store.list("wal/_done").await.unwrap().into_iter().map(|o| o.key).collect();
+    let mut markers: Vec<String> = store.list("wal/_done").await.unwrap().into_iter().map(|o| o.key).collect();
     markers.sort();
     (snapshot(store, 7).await, snapshot(store, 8).await, markers)
 }
@@ -98,7 +112,10 @@ async fn crash_at_every_step_boundary_then_restart() {
     assert_eq!(steps.len(), 16);
     assert_eq!(after_plan_1.0.rows.len(), 2, "two event days");
     assert_eq!(total_rows(&after_plan_1.0), 1100);
-    assert_eq!(after_plan_1.0.identity, [("dev-1".to_owned(), "alice".to_owned()), ("dev-2".to_owned(), "dave".to_owned())]);
+    assert_eq!(
+        after_plan_1.0.identity,
+        [("dev-1".to_owned(), "alice".to_owned()), ("dev-2".to_owned(), "dave".to_owned())]
+    );
 
     for (i, step) in steps.iter().enumerate() {
         let store = Store::memory();

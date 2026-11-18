@@ -203,8 +203,8 @@ pub async fn run(cx: &QueryCx, req: &SqlRequest) -> ApiResult<Value> {
     let events = Arc::new(EventsTable::new(cx.scan.clone()));
     let ordered = events.ordered_flag();
     cx.ctx.register_table("events", events)?;
-    cx.ctx.register_table("persons", Arc::new(PersonsTable::new(cx.snap.persons())))?;
-    for f in udf::public_udfs() {
+    cx.ctx.register_table("persons", Arc::new(PersonsTable::new(&cx.snap)))?;
+    for f in udf::public_udfs(&cx.snap.schema.columns) {
         cx.ctx.register_udf(f);
     }
 

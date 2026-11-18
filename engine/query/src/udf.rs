@@ -7,10 +7,12 @@ use arrow::array::{
     Array, ArrayRef, AsArray, BooleanBuilder, Float64Array, Float64Builder, Int32Builder, StringArray, StringBuilder,
 };
 use arrow::datatypes::{DataType, TimeUnit};
-use datafusion::common::{exec_err, plan_err, Result, ScalarValue};
+use datafusion::common::{exec_err, plan_err, Column, Result, ScalarValue};
+use datafusion::logical_expr::simplify::{ExprSimplifyResult, SimplifyContext};
 use datafusion::logical_expr::{
-    ColumnarValue, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, TypeSignature, Volatility,
+    cast, ColumnarValue, Expr, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, TypeSignature, Volatility,
 };
+use la_core::schema::{PromotedColumn, PropType};
 use la_core::persons::PersonTable;
 use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
@@ -89,16 +91,46 @@ fn scalar_str(v: &ColumnarValue) -> Option<Option<&str>> {
 }
 
 /// `f(json_object, key)`.
+///
+/// The SQL-facing instances know the project's promoted columns: a call on
+/// the `props` column of `events` with a literal key that has a `p_<key>`
+/// column is rewritten to `coalesce(<typed column>, f(props, key))`
+/// (`spec/parquet.md` §3), so promotion never changes what a query returns.
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct JsonProp {
     name: &'static str,
     view: View,
+    /// `(key, column type)` of the project's promoted columns.
+    promoted: Vec<(String, PropType)>,
     signature: Signature,
 }
 
 impl JsonProp {
     pub fn new(name: &'static str, view: View) -> Self {
-        Self { name, view, signature: Signature::exact(vec![DataType::Utf8, DataType::Utf8], Volatility::Immutable) }
+        Self::with_promoted(name, view, Vec::new())
+    }
+
+    pub fn with_promoted(name: &'static str, view: View, promoted: Vec<PromotedColumn>) -> Self {
+        Self {
+            name,
+            view,
+            promoted: promoted.into_iter().map(|c| (c.key, c.ty)).collect(),
+            signature: Signature::exact(vec![DataType::Utf8, DataType::Utf8], Volatility::Immutable),
+        }
+    }
+
+    /// The typed column projected into this function's view, if the column
+    /// type can ever produce a value for it.
+    fn column_view(&self, column: Expr, ty: PropType) -> Option<Expr> {
+        match (self.view, ty) {
+            (View::Str, PropType::String) => Some(column),
+            (View::Str, PropType::Int | PropType::Bool) => Some(cast(column, DataType::Utf8)),
+            (View::Str, PropType::Float) => Some(num_to_str().call(vec![column])),
+            (View::Num, PropType::String) => Some(str_to_num().call(vec![column])),
+            (View::Num | View::JNum, PropType::Int | PropType::Float) => Some(cast(column, DataType::Float64)),
+            (View::Bool, PropType::Bool) => Some(column),
+            _ => None,
+        }
     }
 }
 
@@ -111,6 +143,30 @@ impl ScalarUDFImpl for JsonProp {
     }
     fn return_type(&self, _: &[DataType]) -> Result<DataType> {
         Ok(self.view.data_type())
+    }
+    fn simplify(&self, args: Vec<Expr>, info: &SimplifyContext) -> Result<ExprSimplifyResult> {
+        if self.promoted.is_empty() {
+            return Ok(ExprSimplifyResult::Original(args));
+        }
+        let (Some(Expr::Column(props)), Some(Expr::Literal(ScalarValue::Utf8(Some(key)), _))) = (args.first(), args.get(1))
+        else {
+            return Ok(ExprSimplifyResult::Original(args));
+        };
+        let Some((_, ty)) = self.promoted.iter().find(|c| &c.0 == key).filter(|_| props.name == "props") else {
+            return Ok(ExprSimplifyResult::Original(args));
+        };
+        // Same relation as the `props` argument; absent for `persons.props`
+        // or when a subquery did not carry the promoted column along.
+        let column = Column::new(props.relation.clone(), la_core::schema::promoted_column_name(key));
+        if !info.schema().has_column(&column) {
+            return Ok(ExprSimplifyResult::Original(args));
+        }
+        let Some(typed) = self.column_view(Expr::Column(column), *ty) else {
+            return Ok(ExprSimplifyResult::Original(args));
+        };
+        // The fallback instance carries no promoted columns, so it is not rewritten again.
+        let raw = ScalarUDF::new_from_impl(JsonProp::new(self.name, self.view)).call(args);
+        Ok(ExprSimplifyResult::Simplified(datafusion::prelude::coalesce(vec![typed, raw])))
     }
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
         let n = args.number_rows;
@@ -444,9 +500,11 @@ pub fn person_prop(view: View, table: Arc<PersonTable>) -> ScalarUDF {
     ScalarUDF::new_from_impl(PersonProp::new(name, view, table))
 }
 
-/// The functions `/q/sql` exposes on top of the built-ins.
-pub fn public_udfs() -> Vec<ScalarUDF> {
-    vec![prop(), prop_num(), prop_bool(), hex()]
+/// The functions `/q/sql` exposes on top of the built-ins. `promoted` is the
+/// project's current column list (see [`JsonProp`]).
+pub fn public_udfs(promoted: &[PromotedColumn]) -> Vec<ScalarUDF> {
+    let json = |name, view| ScalarUDF::new_from_impl(JsonProp::with_promoted(name, view, promoted.to_vec()));
+    vec![json("prop", View::Str), json("prop_num", View::Num), json("prop_bool", View::Bool), hex()]
 }
 
 #[cfg(test)]

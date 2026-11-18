@@ -6,7 +6,7 @@ use common::*;
 use la_compactor::job::{self, CommitPlan, Group, Outcome, ProjectEnv};
 use la_compactor::run;
 use la_core::identity::{self, Candidate, IdentityMap};
-use la_core::schema::{PromotedColumn, PropType, ProjectSchema};
+use la_core::schema::{ProjectSchema, PromotedColumn, PropType};
 use la_core::{keys, manifest, Store};
 use std::sync::Arc;
 
@@ -22,7 +22,9 @@ fn group(m: &manifest::DayManifest, level: u8) -> Group {
 async fn l0_files_merge_into_one_l1_and_then_l2() {
     let store = Store::memory();
     for plan in 1..=5u64 {
-        let rows = (0..200).map(|i| row(plan * 1000 + i, &format!("u:{:03}", (i * 7 + plan) % 60), "d", t0() + i as i64)).collect();
+        let rows = (0..200)
+            .map(|i| row(plan * 1000 + i, &format!("u:{:03}", (i * 7 + plan) % 60), "d", t0() + i as i64))
+            .collect();
         add_l0(&store, 7, DAY, plan, rows).await;
     }
     let before = visible(&store, 7, DAY).await;
@@ -57,9 +59,23 @@ async fn l0_files_merge_into_one_l1_and_then_l2() {
 async fn identity_links_are_applied_and_duplicates_dropped() {
     let store = Store::memory();
     // dev-1's events were written before it identified as alice.
-    add_l0(&store, 7, DAY, 1, vec![row(1, "a:dev-1", "dev-1", t0()), row(2, "a:dev-2", "dev-2", t0()), row(3, "u:bob", "x", t0())]).await;
+    add_l0(
+        &store,
+        7,
+        DAY,
+        1,
+        vec![row(1, "a:dev-1", "dev-1", t0()), row(2, "a:dev-2", "dev-2", t0()), row(3, "u:bob", "x", t0())],
+    )
+    .await;
     // The same event again from another plan (retry through another node), plus a later resend with a shifted timestamp.
-    add_l0(&store, 7, DAY, 2, vec![row(1, "a:dev-1", "dev-1", t0()), row(3, "u:bob", "x", t0() + 7), row(4, "u:alice", "dev-1", t0() + 1)]).await;
+    add_l0(
+        &store,
+        7,
+        DAY,
+        2,
+        vec![row(1, "a:dev-1", "dev-1", t0()), row(3, "u:bob", "x", t0() + 7), row(4, "u:alice", "dev-1", t0() + 1)],
+    )
+    .await;
     let mut map = IdentityMap::default();
     identity::append_delta(
         &store,
@@ -153,7 +169,8 @@ async fn large_days_split_by_person_range() {
     for plan in 1..=3u64 {
         let rows = (0..4000)
             .map(|i| {
-                let mut r = row(plan * 10_000 + i, &format!("u:{:04}", (i * 13 + plan * 5) % 800), "d", t0() + i as i64);
+                let mut r =
+                    row(plan * 10_000 + i, &format!("u:{:04}", (i * 13 + plan * 5) % 800), "d", t0() + i as i64);
                 r.props = format!("{{\"n\":{i},\"pad\":\"{}\"}}", "x".repeat(40 + (i % 17) as usize));
                 r
             })
@@ -165,7 +182,9 @@ async fn large_days_split_by_person_range() {
     c.cfg.target_file_bytes = 40_000;
     c.cfg.batch_rows = 512;
     let m = day(&store, 7, DAY).await;
-    let Outcome::Committed { manifest: m2, added } = job::compact(&c, &env(&store, 7).await, DAY, group(&m, 2)).await.unwrap() else {
+    let Outcome::Committed { manifest: m2, added } =
+        job::compact(&c, &env(&store, 7).await, DAY, group(&m, 2)).await.unwrap()
+    else {
         panic!("not committed")
     };
     assert!(added.len() >= 3, "{} parts", added.len());
@@ -216,10 +235,16 @@ async fn second_compactor_gives_up_when_inputs_vanished() {
     let m = day(&store, 7, DAY).await;
     let first = job::stage(&c, &e, DAY, vec![group(&m, 1)]).await.unwrap().unwrap();
     let second = job::stage(&c, &e, DAY, vec![group(&m, 1)]).await.unwrap().unwrap();
-    assert!(matches!(job::commit(&c, 7, DAY, &first, &CommitPlan::replace_inputs()).await.unwrap(), Outcome::Committed { .. }));
+    assert!(matches!(
+        job::commit(&c, 7, DAY, &first, &CommitPlan::replace_inputs()).await.unwrap(),
+        Outcome::Committed { .. }
+    ));
     let keys_before = all_keys(&store, "data").await;
     let version_before = day(&store, 7, DAY).await.version;
-    assert!(matches!(job::commit(&c, 7, DAY, &second, &CommitPlan::replace_inputs()).await.unwrap(), Outcome::InputVanished));
+    assert!(matches!(
+        job::commit(&c, 7, DAY, &second, &CommitPlan::replace_inputs()).await.unwrap(),
+        Outcome::InputVanished
+    ));
     assert_eq!(all_keys(&store, "data").await, keys_before, "the loser leaves nothing behind");
     assert_eq!(day(&store, 7, DAY).await.version, version_before);
     assert_eq!(ids(&visible(&store, 7, DAY).await), [1, 2]);
@@ -310,7 +335,9 @@ async fn concurrent_appends_and_compactions() {
             let (store, done) = (store.clone(), done.clone());
             tokio::spawn(async move {
                 for plan in 2..=40u64 {
-                    let rows = (0..5).map(|i| row(plan * 100 + i, &format!("u:{:04}", (plan * 7 + i) % 50), "d", t0() + i as i64)).collect();
+                    let rows = (0..5)
+                        .map(|i| row(plan * 100 + i, &format!("u:{:04}", (plan * 7 + i) % 50), "d", t0() + i as i64))
+                        .collect();
                     add_l0(&store, 7, DAY, plan, rows).await;
                     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
                 }
@@ -330,7 +357,9 @@ async fn concurrent_appends_and_compactions() {
                         let inputs: Vec<_> = m.files.iter().filter(|f| f.level < 2).cloned().collect();
                         if inputs.len() >= 2 {
                             let e = Arc::new(ProjectEnv::load(&store, 7).await.unwrap());
-                            if let Outcome::Committed { .. } = job::compact(&c, &e, DAY, Group { inputs, level: 1 }).await.unwrap() {
+                            if let Outcome::Committed { .. } =
+                                job::compact(&c, &e, DAY, Group { inputs, level: 1 }).await.unwrap()
+                            {
                                 committed += 1;
                             }
                         }

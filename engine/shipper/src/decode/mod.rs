@@ -29,7 +29,8 @@ pub const BOT: &str = "bot";
 pub const UNKNOWN_PROJECT: &str = "unknown_project";
 
 /// Case-insensitive substrings of a web user agent that mark a bot.
-pub const BOT_PATTERNS: [&str; 7] = ["bot", "crawler", "spider", "headlesschrome", "lighthouse", "pingdom", "phantomjs"];
+pub const BOT_PATTERNS: [&str; 7] =
+    ["bot", "crawler", "spider", "headlesschrome", "lighthouse", "pingdom", "phantomjs"];
 
 pub fn is_bot_ua(ua: &str) -> bool {
     let ua = ua.to_ascii_lowercase();
@@ -119,12 +120,7 @@ pub(crate) fn too_many(n: usize) -> bool {
     n > MAX_PROPS
 }
 
-pub(crate) fn person_writes(
-    out: &mut Vec<PropWrite>,
-    person_key: &str,
-    props: PropList,
-    ts: i64,
-) {
+pub(crate) fn person_writes(out: &mut Vec<PropWrite>, person_key: &str, props: PropList, ts: i64) {
     for (key, value) in props {
         out.push(PropWrite { person_key: person_key.to_owned(), key, value: value.to_json(), ts, seq: 0 });
     }

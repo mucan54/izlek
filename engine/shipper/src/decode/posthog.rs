@@ -114,8 +114,11 @@ pub(super) fn decode(
                         return st.reject(BAD_RECORD, 1);
                     };
                     events = v;
-                    envelope_sent_at =
-                        top.get("sent_at").and_then(|r| serde_json::from_str::<Value>(r.get()).ok()).as_ref().and_then(ts_value);
+                    envelope_sent_at = top
+                        .get("sent_at")
+                        .and_then(|r| serde_json::from_str::<Value>(r.get()).ok())
+                        .as_ref()
+                        .and_then(ts_value);
                 }
                 None => {
                     let Ok(raw) = serde_json::from_str::<&RawValue>(text) else {

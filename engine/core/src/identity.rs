@@ -576,7 +576,8 @@ mod tests {
         assert_eq!((m.version, m.files.len()), (3, 1));
         assert_eq!(m.applied.get("1-0"), Some(&2), "plan bookkeeping is kept");
         // New deltas still append and plans stay idempotent.
-        let again = append_delta(&s, 1, "1-0", 2, vec![cand("a1", "u1", 1, 1)], &mut IdentityMap::default()).await.unwrap();
+        let again =
+            append_delta(&s, 1, "1-0", 2, vec![cand("a1", "u1", 1, 1)], &mut IdentityMap::default()).await.unwrap();
         assert!(again.already_applied);
         // Dropping the last link leaves an empty file list.
         assert_eq!(rewrite_dropping(&s, 1, &["a2".to_owned()].into(), &HashSet::new()).await.unwrap(), 1);

@@ -111,7 +111,13 @@ fn native_identify_set_person_and_reset() {
         set_person(2, t0() - 5, vec![prop("theme", s("dark")), prop("gone", Value::Null)]),
         Record { kind: KIND_RESET, uuid: uuid(3), ts: t0() as u64, ..Default::default() },
         // identify without a string user_id is malformed
-        Record { kind: 1, uuid: uuid(4), ts: t0() as u64, name: String::new(), props: vec![prop("user_id", Value::Int(1))] },
+        Record {
+            kind: 1,
+            uuid: uuid(4),
+            ts: t0() as u64,
+            name: String::new(),
+            props: vec![prop("user_id", Value::Int(1))],
+        },
     ];
     let (out, st) = run(&native(7, t0(), &h, &recs));
     assert!(out.events.is_empty(), "only kind=0 produces event rows");
@@ -165,11 +171,11 @@ fn limits_and_reject_reasons() {
     let many: Vec<_> = (0..201).map(|i| prop(&format!("k{i}"), Value::Int(i))).collect();
     let exactly: Vec<_> = (0..200).map(|i| prop(&format!("k{i}"), Value::Int(i))).collect();
     let recs = vec![
-        event(1, t0(), "", vec![]),                                      // empty_name
-        event(2, t0(), &long, vec![]),                                   // too_long (name)
-        event(3, t0(), "e", vec![prop(&long, Value::Int(1))]),           // too_long (key)
-        event(4, t0(), "e", many),                                       // too_many_props
-        event(5, t0(), "e", exactly),                                    // fine
+        event(1, t0(), "", vec![]),                            // empty_name
+        event(2, t0(), &long, vec![]),                         // too_long (name)
+        event(3, t0(), "e", vec![prop(&long, Value::Int(1))]), // too_long (key)
+        event(4, t0(), "e", many),                             // too_many_props
+        event(5, t0(), "e", exactly),                          // fine
         event(6, t0(), "e", vec![prop("big", s(&big)), prop("fits", s(&"v".repeat(8192)))]), // property dropped
         event(7, t0(), &"n".repeat(128), vec![prop(&"k".repeat(128), Value::Json(format!("[\"{big}\"]")))]),
     ];
@@ -243,7 +249,9 @@ fn bot_filter_needs_the_web_bit() {
     let (out, st) = run(&entry);
     assert!(out.events.is_empty() && out.writes.is_empty());
     assert_eq!(rejected(&st), [("bot", 2)]);
-    for ua in ["HeadlessChrome/120", "Chrome-Lighthouse", "Pingdom.com_bot", "PhantomJS/2.1", "AhrefsSpider", "my CRAWLER"] {
+    for ua in
+        ["HeadlessChrome/120", "Chrome-Lighthouse", "Pingdom.com_bot", "PhantomJS/2.1", "AhrefsSpider", "my CRAWLER"]
+    {
         assert!(decode::is_bot_ua(ua), "{ua}");
     }
     assert!(!decode::is_bot_ua("Mozilla/5.0 (Linux; Android 14) Chrome/120 Mobile Safari/537.36"));
@@ -402,11 +410,9 @@ fn posthog_alias_identified_events_and_event_level_set() {
     assert_eq!(links, [("old-id", "user-1"), ("user-1", "user-1")]);
     assert_eq!((out.events[0].anon_id.as_str(), out.events[0].user_id.as_deref()), ("user-1", None));
 
-    let (out, _) = ph(
-        r#"{"event":"x","distinct_id":"user-1","$set":{"top":true},
+    let (out, _) = ph(r#"{"event":"x","distinct_id":"user-1","$set":{"top":true},
             "properties":{"$is_identified":true,"$device_id":"dev-7","$session_id":"0193f1a2-b3c4-7d5e-8a9b-0c1d2e3f4a5b",
-                          "$unset":["old"],"token":"pk","distinct_id":"user-1"}}"#,
-    );
+                          "$unset":["old"],"token":"pk","distinct_id":"user-1"}}"#);
     let e = &out.events[0];
     assert_eq!((e.anon_id.as_str(), e.user_id.as_deref()), ("dev-7", Some("user-1")));
     assert_eq!(e.session_id, parse_uuid("0193f1a2b3c47d5e8a9b0c1d2e3f4a5b"));
@@ -436,10 +442,19 @@ fn posthog_dimension_mapping_and_value_kinds() {
     let (out, _) = run(&entry);
     let e = &out.events[0];
     let dim = |i: usize| e.dims[i].as_deref();
-    assert_eq!((dim(DIM_OS), dim(DIM_OS_VERSION), dim(DIM_DEVICE_MODEL)), (Some("Android"), Some("14"), Some("Pixel 8")));
-    assert_eq!((dim(DIM_DEVICE_TYPE), dim(DIM_APP_VERSION), dim(DIM_LOCALE)), (Some("Mobile"), Some("3.1"), Some("tr-TR")));
+    assert_eq!(
+        (dim(DIM_OS), dim(DIM_OS_VERSION), dim(DIM_DEVICE_MODEL)),
+        (Some("Android"), Some("14"), Some("Pixel 8"))
+    );
+    assert_eq!(
+        (dim(DIM_DEVICE_TYPE), dim(DIM_APP_VERSION), dim(DIM_LOCALE)),
+        (Some("Mobile"), Some("3.1"), Some("tr-TR"))
+    );
     assert_eq!((dim(DIM_PLATFORM), dim(DIM_SDK)), (Some("android"), Some("posthog-android/3.4.0")));
-    assert_eq!((dim(DIM_URL_PATH), dim(DIM_REFERRER_HOST), dim(DIM_SCREEN)), (Some("/home"), Some("t.co"), Some("Home")));
+    assert_eq!(
+        (dim(DIM_URL_PATH), dim(DIM_REFERRER_HOST), dim(DIM_SCREEN)),
+        (Some("/home"), Some("t.co"), Some("Home"))
+    );
     assert_eq!(dim(DIM_COUNTRY), Some("TR"));
     assert_eq!(e.flags, FLAG_COMPAT | FLAG_WEB);
     let get = |k: &str| e.props.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone()).unwrap();
@@ -475,8 +490,9 @@ fn posthog_limits() {
     assert_eq!((props(&out.events[0]).as_str(), st.props_dropped), (r#"{"ok":1}"#, 1));
     assert_eq!(rejected(&ph(&format!(r#"{{"event":"{}","distinct_id":"d"}}"#, "n".repeat(129))).1), [("too_long", 1)]);
     // A rejected $identify leaves no link behind.
-    let (out, st) =
-        ph(&format!(r#"{{"event":"$identify","distinct_id":"u","properties":{{"$anon_distinct_id":"a","{long_key}":1}}}}"#));
+    let (out, st) = ph(&format!(
+        r#"{{"event":"$identify","distinct_id":"u","properties":{{"$anon_distinct_id":"a","{long_key}":1}}}}"#
+    ));
     assert_eq!((out.links.len(), out.events.len(), st.rejected_total()), (0, 0, 1));
 }
 

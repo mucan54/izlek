@@ -15,7 +15,8 @@ use datafusion::physical_expr::expressions::Column as PhysColumn;
 use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
 use datafusion::physical_plan::sorts::sort_preserving_merge::SortPreservingMergeExec;
 use datafusion::physical_plan::{ExecutionPlan, ExecutionPlanProperties};
-use datafusion::prelude::{SessionConfig, SessionContext};
+use datafusion::logical_expr::lit;
+use datafusion::prelude::{ident, SessionConfig, SessionContext};
 use futures::StreamExt;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -118,19 +119,119 @@ impl QueryCx {
 
     /// Plans a scan of the snapshot's events.
     pub fn plan(&self, req: &ScanRequest) -> ApiResult<Arc<EventsScanExec>> {
-        let state = self.ctx.state();
-        let plan = plan_scan(&self.scan, &state, req)?;
-        self.note_plan(&(Arc::clone(&plan) as Arc<dyn ExecutionPlan>));
-        Ok(plan)
+        self.plan_inner(&self.scan, req, true)
     }
 
     /// Plans a scan against a narrower view of the snapshot (same versions).
     pub fn plan_with(&self, snap: Arc<Snapshot>, req: &ScanRequest) -> ApiResult<Arc<EventsScanExec>> {
-        let state = self.ctx.state();
         let cx = ScanContext { snap, ..self.scan.clone() };
-        let plan = plan_scan(&cx, &state, req)?;
-        self.note_plan(&(Arc::clone(&plan) as Arc<dyn ExecutionPlan>));
+        self.plan_inner(&cx, req, true)
+    }
+
+    fn plan_inner(&self, cx: &ScanContext, req: &ScanRequest, count_files: bool) -> ApiResult<Arc<EventsScanExec>> {
+        let state = self.ctx.state();
+        let plan = plan_scan(cx, &state, req)?;
+        if count_files {
+            self.stats.files.fetch_add(plan.files() as u64, Ordering::Relaxed);
+            self.note_plan(&(Arc::clone(&plan) as Arc<dyn ExecutionPlan>));
+        }
         Ok(plan)
+    }
+
+    /// Disjoint `[lo, hi)` person-key ranges that together cover every key.
+    /// One range (no bounds) unless the query is large enough to be worth
+    /// splitting; split points are row-group minima of the largest file, so
+    /// each range prunes to its own row groups and pages.
+    pub async fn person_ranges(&self) -> ApiResult<Vec<(Option<String>, Option<String>)>> {
+        let cfg = &self.engine.cfg;
+        let mut points: Vec<String> = cfg.person_split.clone();
+        if points.is_empty() && cfg.partitions > 1 {
+            let snap = &self.snap;
+            let files = snap.days.iter().flat_map(|m| m.files.iter()).filter(|f| f.max_ts >= snap.from_ms && f.min_ts < snap.to_ms);
+            let rows: u64 = files.clone().map(|f| f.rows).sum();
+            if rows >= cfg.parallel_min_rows.max(1) {
+                if let Some(largest) = files.max_by_key(|f| f.rows) {
+                    points = self.split_points(&largest.key, largest.bytes, cfg.partitions).await?;
+                }
+            }
+        }
+        points.sort();
+        points.dedup();
+        let mut ranges = Vec::with_capacity(points.len() + 1);
+        let mut lo: Option<String> = None;
+        for p in points {
+            ranges.push((lo.take(), Some(p.clone())));
+            lo = Some(p);
+        }
+        ranges.push((lo, None));
+        Ok(ranges)
+    }
+
+    async fn split_points(&self, key: &str, size: u64, parts: usize) -> ApiResult<Vec<String>> {
+        let meta = self.engine.files.metadata(key, size).await.map_err(|e| ApiError::from(DataFusionError::from(e)))?;
+        let Some(col) = meta.file_metadata().schema_descr().columns().iter().position(|c| c.path().string() == "person_key")
+        else {
+            return Ok(Vec::new());
+        };
+        let mins: Vec<String> = meta
+            .row_groups()
+            .iter()
+            .filter_map(|rg| match rg.column(col).statistics() {
+                Some(parquet::file::statistics::Statistics::ByteArray(s)) => {
+                    s.min_opt().and_then(|m| std::str::from_utf8(m.data()).ok()).map(str::to_owned)
+                }
+                _ => None,
+            })
+            .collect();
+        if mins.len() < parts * 2 {
+            return Ok(Vec::new());
+        }
+        Ok((1..parts).map(|i| mins[i * mins.len() / parts].clone()).collect())
+    }
+
+    /// Runs an ordered scan as one merged stream per person-key range and
+    /// folds each stream in its own task. A person's rows never straddle two
+    /// ranges, so per-person operators can simply add up the states.
+    pub async fn fold_ordered<S, N, F>(
+        &self,
+        req: &ScanRequest,
+        merge_on: &[&str],
+        new_state: N,
+        fold: F,
+    ) -> ApiResult<Vec<S>>
+    where
+        S: Send + 'static,
+        N: Fn() -> S,
+        F: Fn(&mut S, &RecordBatch) -> ApiResult<()> + Send + Sync + 'static,
+    {
+        let ranges = self.person_ranges().await?;
+        let fold = Arc::new(fold);
+        let mut tasks = Vec::with_capacity(ranges.len());
+        for (i, (lo, hi)) in ranges.iter().enumerate() {
+            let mut scoped = req.clone();
+            scoped.ordered = true;
+            if let Some(lo) = lo {
+                scoped.filters.push(ident("person_key").gt_eq(lit(lo.as_str())));
+            }
+            if let Some(hi) = hi {
+                scoped.filters.push(ident("person_key").lt(lit(hi.as_str())));
+            }
+            let plan = self.plan_inner(&self.scan, &scoped, i == 0)?;
+            let mut stream = merged_stream(plan, merge_on, self.task_ctx())?;
+            let fold = Arc::clone(&fold);
+            let mut state = new_state();
+            tasks.push(datafusion::common::runtime::SpawnedTask::spawn(async move {
+                while let Some(batch) = stream.next().await {
+                    fold(&mut state, &batch?)?;
+                }
+                Ok::<S, ApiError>(state)
+            }));
+        }
+        let mut out = Vec::with_capacity(tasks.len());
+        for t in tasks {
+            out.push(t.await.map_err(|e| ApiError::from(DataFusionError::ExecutionJoin(Box::new(e))))??);
+        }
+        Ok(out)
     }
 
     pub fn note_plan(&self, plan: &Arc<dyn ExecutionPlan>) {

@@ -112,7 +112,10 @@ async fn ships_segments_into_sorted_l0_files() {
     );
     // The PostHog page view happened before the $identify of the same plan and is resolved all the same.
     let pageview = rows.iter().find(|r| r.event == "$pageview").unwrap();
-    assert_eq!((pageview.person_key.as_str(), pageview.anon_id.as_str(), pageview.user_id.as_deref()), ("u:user-3", "ph-anon", None));
+    assert_eq!(
+        (pageview.person_key.as_str(), pageview.anon_id.as_str(), pageview.user_id.as_deref()),
+        ("u:user-3", "ph-anon", None)
+    );
     assert_eq!(pageview.dims[la_core::schema::DIM_PLATFORM].as_deref(), Some("web"));
     assert_eq!(rows.len(), 6);
     assert!(rows.iter().all(|r| r.user_id.as_deref() != Some("user-1")), "user_id keeps what the event carried");
@@ -160,46 +163,6 @@ async fn rerunning_the_shipper_changes_nothing() {
     // Uploading the very same segment again (ingestion retry) is not new work either.
     put_segment(&store, &seg_key(10, "ing-01", 1), &basic_entries()).await;
     assert!(ship_once(&ctx(&store)).await.unwrap().is_empty());
-}
-
-fn random_segments(rng: &mut Rng, n_segments: usize) -> Vec<Vec<Entry>> {
-    let mut next_id = 1u64;
-    let mut sent: Vec<(String, u64, i64)> = Vec::new();
-    (0..n_segments)
-        .map(|si| {
-            (0..6)
-                .map(|bi| {
-                    let project = 7 + rng.below(2) as u32;
-                    let anon = format!("dev-{}", rng.below(12));
-                    // A device that identified sends its user id from then on.
-                    let user = if rng.below(4) == 0 { format!("user-{}", rng.below(5)) } else { String::new() };
-                    let recv = t0() + (si * 6 + bi) as i64 * 1000;
-                    let mut recs = Vec::new();
-                    for _ in 0..(1 + rng.below(8)) {
-                        // Occasionally re-send an earlier event verbatim (same uuid, same ts).
-                        if !sent.is_empty() && rng.below(6) == 0 {
-                            let (a, id, ts) = sent[rng.below(sent.len() as u64) as usize].clone();
-                            if a == anon {
-                                recs.push(event(id, ts, "tap", vec![prop("n", Value::Int(id as i64))]));
-                                continue;
-                            }
-                        }
-                        let ts = recv - rng.below(30 * HOUR_MS as u64) as i64;
-                        recs.push(event(next_id, ts, "tap", vec![prop("n", Value::Int(next_id as i64))]));
-                        sent.push((anon.clone(), next_id, ts));
-                        next_id += 1;
-                    }
-                    // Each device identifies as one fixed user (no conflicting links).
-                    if rng.below(5) == 0 {
-                        let u = format!("owner-of-{anon}");
-                        recs.push(identify(next_id, recv - 1, &u, vec![]));
-                        next_id += 1;
-                    }
-                    native(project, recv, &header(&anon, &user, 0), &recs)
-                })
-                .collect()
-        })
-        .collect()
 }
 
 /// Design §17.4: the order and batching in which segments are processed does
@@ -291,15 +254,18 @@ async fn promotion_end_to_end() {
                     .map(|i| {
                         let id = base + b * 100 + i;
                         let mut props = vec![
-                            prop("plan", s(if id % 2 == 0 { "pro" } else { "free" })),
+                            prop("plan", s(if id.is_multiple_of(2) { "pro" } else { "free" })),
                             // inconsistent types → never promoted, however frequent
-                            prop("mixed", if id % 2 == 0 { s("x") } else { Value::Int(1) }),
+                            prop("mixed", if id.is_multiple_of(2) { s("x") } else { Value::Int(1) }),
                         ];
-                        if id % 5 != 0 {
+                        if !id.is_multiple_of(5) {
                             // int and float mixed → float column
-                            props.push(prop("amount", if id % 2 == 0 { Value::Int(id as i64) } else { Value::Float(0.5) }));
+                            props.push(prop(
+                                "amount",
+                                if id.is_multiple_of(2) { Value::Int(id as i64) } else { Value::Float(0.5) },
+                            ));
                         }
-                        if id % 50 == 0 {
+                        if id.is_multiple_of(50) {
                             props.push(prop("rare", Value::Bool(true))); // below 5 % and below 1000 events
                         }
                         event(id, t0() - 1000, "purchase", props)
@@ -353,10 +319,8 @@ async fn promotion_end_to_end() {
     let names: Vec<&str> = file_schema.fields().iter().map(|f| f.name().as_str()).collect();
     let flags = names.iter().position(|n| *n == "flags").unwrap();
     assert_eq!(&names[flags + 1..], ["p_plan", "p_amount", "props"], "promoted columns sit between flags and props");
-    let rows: Vec<_> = batches
-        .iter()
-        .flat_map(|b| la_core::events::batch_to_rows(b, &schema.columns).unwrap())
-        .collect();
+    let rows: Vec<_> =
+        batches.iter().flat_map(|b| la_core::events::batch_to_rows(b, &schema.columns).unwrap()).collect();
     use la_core::events::Cell;
     let by_id = |id: u64| rows.iter().find(|r| r.uuid == uuid(id)).unwrap();
     assert_eq!(by_id(1502).promoted, [Some(Cell::Str("pro".into())), Some(Cell::Float(1502.0))], "int widened");
@@ -409,7 +373,8 @@ async fn a_shipper_only_processes_projects_of_its_shards() {
 async fn a_shard_map_change_applies_by_segment_hour() {
     let store = Store::memory();
     let switch = day_start_ms(DAY).unwrap() + 12 * HOUR_MS;
-    let maps = vec![ShardMap { version: 1, from_ms: 0, shards: 1 }, ShardMap { version: 2, from_ms: switch, shards: 2 }];
+    let maps =
+        vec![ShardMap { version: 1, from_ms: 0, shards: 1 }, ShardMap { version: 2, from_ms: switch, shards: 2 }];
     store.put_json(keys::SHARDS, &Shards { maps }).await.unwrap();
     let e = |id: u64| vec![native(7, t0(), &header("dev", "", 0), &[event(id, t0() - 1, "e", vec![])])];
     put_segment(&store, &seg_key(11, "n", 1), &e(1)).await; // closed under map 1
@@ -500,7 +465,12 @@ async fn project_config_drop_keys_unknown_projects_and_bots() {
     let mut bot = native(7, t0(), &bot_header, &[event(3, t0() - 1, "pageview", vec![])]);
     bot.0.flags = ENV_FLAG_WEB;
     let entries = vec![
-        native(7, t0(), &header("dev", "", 0), &[event(1, t0() - 1, "e", vec![prop("email", s("a@b.c")), prop("k", Value::Int(1))])]),
+        native(
+            7,
+            t0(),
+            &header("dev", "", 0),
+            &[event(1, t0() - 1, "e", vec![prop("email", s("a@b.c")), prop("k", Value::Int(1))])],
+        ),
         native(8, t0(), &header("dev", "", 0), &[event(2, t0() - 1, "e", vec![]), event(4, t0() - 1, "e", vec![])]),
         bot,
         native(7, t0(), &header("dev", "", 0), &[event(5, t0() - 1, "", vec![])]),
@@ -560,7 +530,12 @@ async fn tombstoned_people_are_filtered_at_write_time() {
     ship_once(&ctx(&store)).await.unwrap();
     assert_eq!(manifest::load_day(&store, 7, DAY).await.unwrap().tombstone_ts, 0);
 
-    let t = Tombstone { id: "del_1".into(), ts_ms: 5000, person_keys: vec!["u:gone".into()], anon_ids: vec!["dev-anon".into()] };
+    let t = Tombstone {
+        id: "del_1".into(),
+        ts_ms: 5000,
+        person_keys: vec!["u:gone".into()],
+        anon_ids: vec!["dev-anon".into()],
+    };
     store.put_json(&tombstone_key(7, &t), &t).await.unwrap();
     put_segment(&store, &seg_key(10, "n", 2), &entries).await;
     let out = ship_once(&ctx(&store)).await.unwrap();
@@ -619,4 +594,67 @@ async fn run_loop_holds_the_lease_and_ships() {
     assert!(text.contains("la_shipper_records_out_total 1"), "{text}");
     tx.send(true).unwrap();
     task.await.unwrap().unwrap();
+}
+
+/// Step 2 of the loop: a plan is cut when the batch window is over or the
+/// size budget is reached, and takes pending segments in key order.
+#[tokio::test]
+async fn plans_follow_the_batch_window_and_size_budget() {
+    use la_core::control::Shards;
+    use la_shipper::plan::{hour_prefixes, list_segments};
+    use la_shipper::ship::{ShardWorker, Tick};
+
+    let store = Store::memory();
+    let mut c = ctx(&store);
+    c.cfg.batch_interval_ms = 3_600_000;
+    let shards = Shards::default();
+    let seg = |id: u64| vec![native(7, t0(), &header("dev", "", 0), &[event(id, t0() - 1, "e", vec![])])];
+    let listing = |store: Store| async move { list_segments(&store, &hour_prefixes(now(), 48)).await.unwrap() };
+    let mut worker = ShardWorker::new("1-0", c.cfg.initial_ratio);
+
+    assert!(matches!(worker.tick(&c, &shards, &listing(store.clone()).await, false).await.unwrap(), Tick::Idle));
+    // The first plan of a fresh worker is cut right away.
+    put_segment(&store, &seg_key(10, "n", 1), &seg(1)).await;
+    let first = worker.tick(&c, &shards, &listing(store.clone()).await, false).await.unwrap();
+    assert!(matches!(first, Tick::Executed(ref o) if o.plan == 1 && o.segments == 1));
+    // New segments now wait for the window …
+    put_segment(&store, &seg_key(10, "n", 3), &seg(3)).await;
+    put_segment(&store, &seg_key(10, "n", 2), &seg(2)).await;
+    let waiting = worker.tick(&c, &shards, &listing(store.clone()).await, false).await.unwrap();
+    assert!(matches!(waiting, Tick::Waiting { pending: 2 }), "{waiting:?}");
+    assert!(c.metrics.render().contains("la_shipper_segments_pending{shard=\"1-0\"} 2"));
+    assert_eq!(la_shipper::plan::latest_plan_number(&store, "1-0").await.unwrap(), 1);
+    // … unless the size budget is reached: then the plan takes segments in key order up to the budget.
+    c.cfg.batch_bytes = 1;
+    let by_size = worker.tick(&c, &shards, &listing(store.clone()).await, false).await.unwrap();
+    assert!(matches!(by_size, Tick::Executed(ref o) if o.plan == 2 && o.segments == 1));
+    let plan: Plan = load_plan(&store, "1-0", 2).await.unwrap().unwrap();
+    assert_eq!(plan.segments, [seg_key(10, "n", 2)]);
+    assert_eq!((plan.holder.as_str(), plan.created_at), ("shipper", now()));
+    // With a generous budget and an elapsed window everything pending goes into one plan.
+    c.cfg.batch_bytes = u64::MAX;
+    c.cfg.batch_interval_ms = 0;
+    put_segment(&store, &seg_key(10, "n", 4), &seg(4)).await;
+    let rest = worker.tick(&c, &shards, &listing(store.clone()).await, false).await.unwrap();
+    assert!(matches!(rest, Tick::Executed(ref o) if o.plan == 3 && o.segments == 2));
+    assert!(matches!(worker.tick(&c, &shards, &listing(store.clone()).await, false).await.unwrap(), Tick::Idle));
+
+    // Another process cut the next plan first: this worker notices, re-reads and carries on.
+    put_segment(&store, &seg_key(10, "n", 5), &seg(5)).await;
+    let foreign = Plan {
+        n: 4,
+        shardkey: "1-0".into(),
+        created_at: now(),
+        holder: "other".into(),
+        segments: vec![seg_key(10, "n", 5)],
+        rebuild: None,
+    };
+    store.put_json(&keys::wal_plan("1-0", 4), &foreign).await.unwrap();
+    let segments = listing(store.clone()).await;
+    assert!(matches!(worker.tick(&c, &shards, &segments, false).await.unwrap(), Tick::Lost));
+    // The foreign plan is unfinished (its owner died): it is re-executed, not replaced.
+    let redo = worker.tick(&c, &shards, &segments, false).await.unwrap();
+    assert!(matches!(redo, Tick::Executed(ref o) if o.plan == 4 && o.records_out == 1), "{redo:?}");
+    assert!(matches!(worker.tick(&c, &shards, &segments, false).await.unwrap(), Tick::Idle));
+    assert_eq!(snapshot(&store, 7).await.rows[DAY].len(), 5);
 }
