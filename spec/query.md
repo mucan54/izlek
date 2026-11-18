@@ -160,3 +160,21 @@ Sonuç önbelleği anahtarı = `sha256(proje ‖ uç ‖ kanonik istek JSON'u �
 ## 10. Tekilleştirme
 
 Aynı `uuid`, compaction öncesinde birden çok dosyada bulunabilir (node'lar arası yeniden gönderim, plan yeniden yürütme). Sorgu katmanı bir günün dosya sayısı > 1 ise o günü `(person_key, ts, uuid)` sıralı birleştirir ve **bitişik eşit `(person_key, ts, uuid)`** satırlarından yalnızca birini geçirir. Tek dosyalı günlerde (L2) ek maliyet yoktur.
+
+**Bilinen sınır.** Compaction daha güçlü bir kural uygular: bir kişinin aynı gündeki satırlarında aynı `uuid`'yi taşıyanlardan yalnızca en erken `ts`'li kalır. Aynı `uuid` iki dosyaya **farklı `ts`** ile yazılmışsa sorgu, compaction'a kadar ikisini de sayar. Bu yalnızca şu üç koşul birlikteyken olur: cihaz saati 5 sn'den fazla kaymış (`wire.md` §5 düzeltmesi devrede), batch'in ilk gönderimi kalıcı olmuş ama yanıtı istemciye ulaşmamış, ve yeniden gönderim ingestion'ın `batch_id` LRU'suna takılmamış (başka node, süresi dolmuş kayıt). Düzeltilmiş `ts` iki denemede birkaç ms farklı çıkar. Sıcak günlerde L0 → L1 compaction'ı farkı kendiliğinden kapatır.
+
+## 11. Netleştirmeler (uygulamanın seçtiği davranışlar)
+
+- **Gövde**: bilinmeyen alan `400` (yazım hatası sorguyu sessizce değiştirmesin). `> 1 MiB` gövde `413`.
+- **Funnel**: `window_seconds` varsayılanı 7 gün; `breakdown_limit` varsayılanı 1000; 50.000'den fazla kırılım değeri `400`. `any` sırasında tek event birden çok adımı sağlayabilir, kırılım değeri çapa event'ten alınır, `median_seconds[k]` = `k−1` ve `k` farklı adıma ilk ulaşma anları arasındaki süre. Medyan adım başına 4096 örneğe (kırılım değeri başına 256) kadar kesindir, ötesinde t-digest.
+- **Trends**: kırılım istenmediyse seride `breakdown` anahtarı yoktur (`null` = null kovası). İlk N, seri başına eşleşen satır sayısına (`sum` için toplama) göre seçilir; `avg` için `$other` ağırlıklı ortalamadır.
+- **Retention**: aralıktaki tüm dönemler listelenir (boş kohortlar dahil). Varsayılanlar: `period = day`, `periods = 8`, `return` = herhangi bir event.
+- **Events**: varsayılan `order = desc`, `limit = 100`. `cursor` projeye ve sorguya bağlıdır; başka sorguda `400`.
+- **SQL**: Boolean → `"true"`/`"false"`; satır sınırına takılan yanıtta `"truncated": true`; özyinelemeli CTE kapalı. `events.props` üzerindeki `prop*()` çağrıları, anahtar terfi edilmişse `coalesce(p_<anahtar>, …)` olarak yeniden yazılır (terfi sonuçları değiştirmez).
+- **Sınırlar**: bellek bütçesi aşımı `422 memory_limit`; süre sınırı kuyruk beklemesini de kapsar; tarama sınırı gerçekten okunan sütun baytlarına uygulanır (footer'lar hariç).
+- **Replay**: yabancı önek `403`, kendi öneki altında bozuk anahtar `400`, olmayan nesne `404`.
+- **İç başlık**: `X-LA-Internal` yanlışsa ya da sır yapılandırılmamışsa, geçerli bir `Bearer` olsa bile `401`. `X-LA-Project` sırsız gelirse `401`. Kapatılmış proje `403`.
+- **Önbellek**: anahtar şema sürümünü de içerir; kişi tablosu sürümü yalnızca sorgu kişi verisi kullanıyorsa girer. Önbellekten dönen yanıtta `bytes_scanned = 0`. Önbellek ve eşzamanlılık sınırları süreç başınadır (replikalar arasında paylaşılmaz).
+- **Tombstone**: silinen kişi `persons` tablosunda ve `/q/schema` kişi özelliklerinde de görünmez. Kişinin replay nesneleri compactor silene kadar depoda durur (indeks event'i gizlendiği için listelenmez).
+- **Sıra**: tarama `(person_key, ts, uuid)` sırasını bildirir (`docs/design.md` §11.1'in üst kümesi).
+- **Yapılmadı (v1.1)**: `/q/paths`, ön toplamalar.

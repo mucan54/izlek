@@ -120,12 +120,12 @@ groups:
           summary: "Sorgu kuyruğu doluyor — query node ekleyin"
       - alert: QueryErrorRate
         expr: |
-          sum(rate(la_query_queries_total{status="error"}[10m]))
-            / clamp_min(sum(rate(la_query_queries_total[10m])), 1) > 0.05
+          sum(rate(la_query_queries_total{status=~"internal|timeout|memory_limit|queue_full"}[10m]))
+            / clamp_min(sum(rate(la_query_queries_total[10m])), 0.01) > 0.05
         for: 10m
         labels: { severity: ticket }
         annotations:
-          summary: "Sorgu hata oranı %5'in üzerinde"
+          summary: "Sunucu kaynaklı sorgu hataları (internal, timeout, memory_limit, queue_full) %5'in üzerinde"
 
   - name: la-control
     rules:

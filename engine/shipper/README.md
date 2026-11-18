@@ -40,7 +40,7 @@ Depo: `LA_STORE_URL` (`s3://bucket[/önek]` | `file:///dizin`), `LA_S3_ENDPOINT`
 | `LA_METRICS_ADDR` | `0.0.0.0:9102` (ship), `:9103` (compact) | `/metrics`, `/healthz`; `off` kapatır |
 | `LA_LOG` | `info` | `tracing` filtresi; loglar JSON satırlarıdır, event içeriği loglanmaz |
 | `LA_SHIPPER_BATCH_SECS` | `30` | Plan kesme aralığı |
-| `LA_SHIPPER_BATCH_MB` | `256` | Plan başına açılmış bayt bütçesi (sıkıştırılmış boyut × ölçülen oran ile tahmin edilir) |
+| `LA_SHIPPER_BATCH_MB` | `64` | Plan başına açılmış bayt bütçesi (sıkıştırılmış boyut × ölçülen oran ile tahmin edilir) |
 | `LA_SHIPPER_POLL_SECS` | `2` | Döngü periyodu |
 | `LA_SHIPPER_SCAN_HOURS` | `48` | Taranan saat penceresi |
 | `LA_SHIPPER_FULL_SCAN_SECS` | `60` | Tüm pencerenin yeniden listelenme sıklığı (arada yalnızca son 3 saat listelenir) |
@@ -144,9 +144,10 @@ taşır; manifest yarışı kaybedilirse çıktılar silinip yeni adla yeniden y
 | Compaction, 5 M satırlık gün | 10 L0 (117 MB) → 1 L2 (115 MB): **9,7 sn ≈ 510 bin satır/sn** (12 MB/sn); ≈ 225 bin satırın anahtarı kimlik eşlemesiyle değişti |
 | Compaction tepe RSS | **362 MB** (varsayılan ayarlar: girdiler bellekte); 251 MB (`LA_COMPACTOR_MEM_INPUT_MB=1`, 32 MB'lık çıktılar) |
 
-Shipper belleği plan boyutuyla orantılıdır (açılmış segmentler + satır başına ≈ 1,5 KB). Varsayılan 256 MB'lık
-bütçe, bu profildeki gibi küçük event'lerde (≈ 110 bayt) ≈ 2,3 M event ≈ 3,5 GB demektir; küçük event'li iş
-yüklerinde `LA_SHIPPER_BATCH_MB` düşürülmelidir.
+Shipper belleği plan boyutuyla orantılıdır (açılmış segmentler + satır başına ≈ 1,5 KB). Bu profildeki
+gibi küçük event'lerde (≈ 110 bayt) 256 MB'lık bütçe ≈ 2,3 M event ≈ 3,5 GB demektir; bu yüzden varsayılan
+64 MB'tır (≈ 0,6 M event, hesapla ≈ 0,9 GB — bu değer ölçülmedi, yukarıdaki satır başı maliyetten türetildi).
+Belleği bol makinelerde `LA_SHIPPER_BATCH_MB` yükseltilerek plan (ve L0 dosyası) sayısı azaltılabilir.
 
 Compaction belleği ise gün boyutundan bağımsızdır: `girdi sayısı × batch` + bellekteki girdiler (≤ 128 MB) + anahtarı
 değişen satır tamponu (≤ `MAX_MOVED_ROWS`) + kişi başına `uuid` kümesi + yüklenmekte olan tek çıktı dosyası.

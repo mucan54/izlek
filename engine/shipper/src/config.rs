@@ -41,7 +41,8 @@ impl Default for ShipConfig {
     fn default() -> Self {
         Self {
             batch_interval_ms: 30_000,
-            batch_bytes: 256 * MB,
+            // Peak memory is roughly 14× this for small events (≈ 1.5 KB per row).
+            batch_bytes: 64 * MB,
             poll_interval_ms: 2_000,
             scan_hours: 48,
             full_scan_interval_ms: 60_000,
