@@ -55,7 +55,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            listen: "0.0.0.0:8090".into(),
+            listen: "0.0.0.0:8081".into(),
             internal_secret: None,
             cache_dir: None,
             cache_bytes: 20 << 30,

@@ -56,7 +56,7 @@ Depo değişkenleri `spec/manifest.md` §0 ile aynıdır: `LA_STORE_URL` (`s3://
 
 | Değişken | Varsayılan | Anlam |
 |---|---|---|
-| `LA_QUERY_LISTEN` | `0.0.0.0:8090` | Dinlenen adres |
+| `LA_QUERY_LISTEN` | `0.0.0.0:8081` | Dinlenen adres |
 | `LA_QUERY_INTERNAL_SECRET` | (yok) | `X-LA-Internal` sırrı; boşsa iç çağrı yolu kapalıdır |
 | `LA_QUERY_CACHE_DIR` | (yok) | Yerel dosya önbelleği dizini; yoksa disk katmanı kapalı (footer önbelleği hep açık) |
 | `LA_QUERY_CACHE_BYTES` | 20 GiB | Disk önbelleği üst sınırı (LRU); tek dosya bunun yarısından büyükse önbelleğe alınmaz |

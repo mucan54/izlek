@@ -80,6 +80,7 @@ Kapanış (`SIGTERM`/`SIGINT`): `/readyz` 503 → `LA_DRAIN_SECONDS` bekle → a
 | `POST /v1/e` | LA1 batch. `Authorization: Bearer pk_…` ya da `?t=`. `Content-Encoding: gzip` isteğe bağlı. 200 / 400 / 401 / 403 / 413 / 429 / 503 (`spec/wire.md` §3–4). Boş batch: 200, yazılmaz. Tekrar eden `batch_id`: 200, yazılmaz |
 | `POST /v1/r?s=&n=&ts=&d=&a=[&u=][&t=]` | Replay parçası. `Content-Encoding: gzip`/`zstd` zorunlu (yoksa 400), gövde ≤ 1 MiB, token `replay: true` değilse 403. Gövde akış halinde depoya yazılır, sonra `format=3` indeks kaydı fsync edilir |
 | `POST /batch`, `/i/v0/e`, `/e`, `/capture` (`/` ile de) | PostHog adaptörü → `format=2`. `Content-Encoding: gzip`, `?compression=gzip-js`, form `data=<base64 ya da JSON>`, çıplak base64, `GET ?data=`, düz JSON. Token sırası: `api_key` → `token` → ilk event `properties.token` → `Bearer` → `?t=`. Yanıt `200 {"status": 1}` |
+| `GET /flags/<token>.json` | Control plane'in yayınladığı kural seti (`spec/flags.md` §1). Bilinmeyen/devre dışı token ve yayınlanmamış küme: 404. `ETag` + `Cache-Control: public, max-age=60`, `If-None-Match` → 304. Token başına bellekte tutulur, depodan en çok 30 sn'de bir yenilenir; depo hatasında son kopya sunulur. `LA_COMPAT_POSTHOG`'dan bağımsızdır |
 | `/decide`, `/flags` (her yöntem), `GET /array/<token>/config` | Sabit boş flag yanıtı (`spec/flags.md` §6) |
 | `GET /healthz`, `/readyz`, `/metrics` | Canlılık; hazır olma (kapanış, geri basınç, token yok → 503 + neden); Prometheus (`la_ingest_*`) |
 

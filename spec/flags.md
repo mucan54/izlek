@@ -33,6 +33,8 @@ Kaynak: `docs/design.md` §12. Vektörler: `spec/vectors/murmur3.json`, `spec/ve
 
 SDK indirme adresi: `<flagsHost>/flags/<token>.json` (`flagsHost` varsayılanı `host`).
 
+Ingestion servisi bu yolu kendisi de sunar (`GET /flags/<token>.json`: depodaki dosya, `ETag`, `Cache-Control: public, max-age=60`, `If-None-Match` → `304`; bilinmeyen ya da devre dışı token → `404`), böylece varsayılan SDK yapılandırması ek altyapı olmadan çalışır. Önüne CDN konabilir; `flagsHost` ile doğrudan depoyu/CDN'i göstermek de geçerlidir. Bir flag değişikliğinin SDK'ya ulaşması en çok: yayın (≤ 2 sn) + ingestion kopyası (≤ 30 sn) + CDN/tarayıcı önbelleği (60 sn) + SDK yenileme aralığı.
+
 ## 2. Sonuç tipi
 
 Bir flag'in değeri: `null` (kapalı/eşleşme yok ve `default` null), `true` (varyantsız açık) ya da varyant anahtarı (string). `default` alanı `null`, `true`, `false` ya da string olabilir; `false` ≡ `null`.

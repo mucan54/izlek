@@ -48,6 +48,7 @@ type Server struct {
 	writer    *wal.Writer
 	uploader  *wal.Uploader
 
+	rulesets   rulesetCache
 	localBytes atomic.Int64 // bytes of local, not yet uploaded WAL
 	maxLocal   int64
 
@@ -305,6 +306,10 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		}
 		s.handleMetrics(w, r)
 	default:
+		if _, ok := rulesetToken(p); ok {
+			s.serve(w, r, metrics.FormatFlags, s.handleRuleset)
+			return
+		}
 		if s.cfg.CompatPostHog {
 			switch strings.TrimSuffix(p, "/") {
 			case "/batch", "/i/v0/e", "/e", "/capture":
@@ -329,10 +334,12 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 
 // reply is what a handler wants sent.
 type reply struct {
-	status     int
-	retryAfter int    // seconds; > 0 adds Retry-After
-	body       string // small static body
-	ctype      string
+	status       int
+	retryAfter   int    // seconds; > 0 adds Retry-After
+	body         string // small static body
+	ctype        string
+	etag         string // adds ETag
+	cacheControl string // adds Cache-Control
 }
 
 func notFound(*http.Request, *reqCtx) reply { return reply{status: http.StatusNotFound} }
@@ -383,16 +390,24 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, format int, h fun
 			hdr.Set("Access-Control-Allow-Origin", rc.origin)
 			hdr.Set("Access-Control-Allow-Credentials", "true")
 			// Lets browser SDKs read the retry hint on 429/503.
-			hdr.Set("Access-Control-Expose-Headers", "Retry-After")
+			hdr.Set("Access-Control-Expose-Headers", "Retry-After, ETag")
 		}
 	}
 	if rep.retryAfter > 0 {
 		hdr.Set("Retry-After", strconv.Itoa(rep.retryAfter))
 	}
-	if rep.body != "" {
+	if rep.etag != "" {
+		hdr.Set("ETag", rep.etag)
+	}
+	if rep.cacheControl != "" {
+		hdr.Set("Cache-Control", rep.cacheControl)
+	}
+	switch {
+	case rep.status == http.StatusNotModified: // a 304 carries no entity headers
+	case rep.body != "":
 		hdr.Set("Content-Type", rep.ctype)
 		hdr.Set("Content-Length", strconv.Itoa(len(rep.body)))
-	} else {
+	default:
 		hdr.Set("Content-Length", "0")
 	}
 	w.WriteHeader(rep.status)
