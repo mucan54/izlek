@@ -305,35 +305,40 @@ async fn concurrent_appends_and_compactions() {
     let dir = tempfile::tempdir().unwrap();
     for store in [Store::memory(), Store::local(dir.path()).unwrap()] {
         add_l0(&store, 7, DAY, 1, vec![row(1, "u:0001", "d", t0())]).await;
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let appender = {
-            let store = store.clone();
+            let (store, done) = (store.clone(), done.clone());
             tokio::spawn(async move {
                 for plan in 2..=40u64 {
                     let rows = (0..5).map(|i| row(plan * 100 + i, &format!("u:{:04}", (plan * 7 + i) % 50), "d", t0() + i as i64)).collect();
                     add_l0(&store, 7, DAY, plan, rows).await;
-                    tokio::task::yield_now().await;
+                    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
                 }
+                done.store(true, std::sync::atomic::Ordering::SeqCst);
             })
         };
         let compactors: Vec<_> = (0..3)
             .map(|_| {
-                let store = store.clone();
+                let (store, done) = (store.clone(), done.clone());
                 tokio::spawn(async move {
                     let c = ctx(&store);
                     let mut committed = 0;
-                    for _ in 0..25 {
+                    loop {
+                        // Read the flag first so one more pass runs after the last append.
+                        let last_pass = done.load(std::sync::atomic::Ordering::SeqCst);
                         let m = day(&store, 7, DAY).await;
                         let inputs: Vec<_> = m.files.iter().filter(|f| f.level < 2).cloned().collect();
-                        if inputs.len() < 2 {
-                            tokio::task::yield_now().await;
-                            continue;
+                        if inputs.len() >= 2 {
+                            let e = Arc::new(ProjectEnv::load(&store, 7).await.unwrap());
+                            if let Outcome::Committed { .. } = job::compact(&c, &e, DAY, Group { inputs, level: 1 }).await.unwrap() {
+                                committed += 1;
+                            }
                         }
-                        let e = Arc::new(ProjectEnv::load(&store, 7).await.unwrap());
-                        if let Outcome::Committed { .. } = job::compact(&c, &e, DAY, Group { inputs, level: 1 }).await.unwrap() {
-                            committed += 1;
+                        if last_pass {
+                            return committed;
                         }
+                        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
                     }
-                    committed
                 })
             })
             .collect();
