@@ -1,0 +1,96 @@
+# Tek makine dağıtımı (taslak).
+#
+# DOĞRULANMADI: bu dosya ve deploy/docker/*.Dockerfile, yazıldıkları ortamda Docker ile
+# derlenip çalıştırılamadı. Aynı süreç düzeni (ortak dosya deposu, aynı ortam değişkenleri)
+# Docker'sız olarak deploy/local/run.sh ve e2e/run.mjs ile doğrulandı.
+#
+#   cp .env.example .env   # sırları doldurun
+#   docker compose up -d --build
+#   docker compose run --rm control bootstrap --email siz@example.com --password '…' --org Org --project Proje
+#
+# Dışarı yalnızca ingestion (8080) ve control plane/UI (8090) açılır; önlerine TLS sonlandıran
+# bir vekil koyun ve LA_TRUSTED_PROXIES / LA_COOKIE_SECURE değerlerini ona göre ayarlayın.
+# Çok makineli kurulumda LA_STORE_URL=s3://… kullanılır ve "store" birimi kalkar.
+
+x-store: &store
+  LA_STORE_URL: file:///data/store
+
+services:
+  init:
+    image: busybox:1.36
+    command: sh -c "mkdir -p /data/store /data/wal /data/control /data/qcache /data/spool && chown -R 65532:65532 /data"
+    volumes: [data:/data]
+
+  ingest:
+    build: { context: ../.., dockerfile: deploy/docker/go.Dockerfile, args: { PKG: ./ingest/cmd/la-ingest } }
+    depends_on: { init: { condition: service_completed_successfully } }
+    environment:
+      <<: *store
+      LA_LISTEN: ":8080"
+      LA_ADMIN_LISTEN: ":9100"
+      LA_NODE_ID: ing-01
+      LA_WAL_DIR: /data/wal
+      LA_TRUSTED_PROXIES: "${LA_TRUSTED_PROXIES:-0}"
+    volumes: [data:/data]
+    ports: ["8080:8080"]
+    stop_grace_period: 90s
+    restart: unless-stopped
+
+  shipper:
+    build: &engine { context: ../.., dockerfile: deploy/docker/engine.Dockerfile, args: { PKG: la-shipper, BIN: la-shipper } }
+    depends_on: { init: { condition: service_completed_successfully } }
+    command: ["ship"]
+    environment: { <<: *store, LA_METRICS_ADDR: ":9102" }
+    volumes: [data:/data]
+    restart: unless-stopped
+
+  compactor:
+    build: *engine
+    depends_on: { init: { condition: service_completed_successfully } }
+    command: ["compact"]
+    environment: { <<: *store, LA_METRICS_ADDR: ":9103", LA_COMPACTOR_SPOOL: /data/spool }
+    volumes: [data:/data]
+    restart: unless-stopped
+
+  query:
+    build: { context: ../.., dockerfile: deploy/docker/engine.Dockerfile, args: { PKG: la-query, BIN: la-query } }
+    depends_on: { init: { condition: service_completed_successfully } }
+    environment:
+      <<: *store
+      LA_QUERY_LISTEN: "0.0.0.0:8081"
+      LA_QUERY_INTERNAL_SECRET: "${LA_QUERY_INTERNAL_SECRET:?}"
+      LA_QUERY_CACHE_DIR: /data/qcache
+    volumes: [data:/data]
+    restart: unless-stopped
+
+  control:
+    build: { context: ../.., dockerfile: deploy/docker/control.Dockerfile }
+    depends_on: { init: { condition: service_completed_successfully } }
+    environment:
+      <<: *store
+      LA_CONTROL_LISTEN: ":8090"
+      LA_CONTROL_ADMIN_LISTEN: ":9101"
+      LA_CONTROL_DB: /data/control/control.db
+      LA_QUERY_URL: http://query:8081
+      LA_QUERY_INTERNAL_SECRET: "${LA_QUERY_INTERNAL_SECRET:?}"
+      LA_UI_DIR: /ui
+      LA_COOKIE_SECURE: "${LA_COOKIE_SECURE:-true}"
+    volumes: [data:/data]
+    ports: ["8090:8090"]
+    restart: unless-stopped
+
+  canary:
+    build: { context: ../.., dockerfile: deploy/docker/go.Dockerfile, args: { PKG: ./canary/cmd/la-canary } }
+    profiles: [canary]   # token ve anahtar oluşturulduktan sonra: docker compose --profile canary up -d
+    environment:
+      LA_CANARY_INGEST_URL: http://ingest:8080
+      LA_CANARY_QUERY_URL: http://query:8081
+      LA_CANARY_TOKEN: "${LA_CANARY_TOKEN:-}"
+      LA_CANARY_QUERY_KEY: "${LA_CANARY_QUERY_KEY:-}"
+      LA_CANARY_STATE: /data/canary.json
+      LA_CANARY_LISTEN: ":8099"
+    volumes: [data:/data]
+    restart: unless-stopped
+
+volumes:
+  data:

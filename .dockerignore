@@ -1,0 +1,11 @@
+.git
+.local
+**/target
+**/target-*
+**/node_modules
+**/dist
+**/build
+**/.gradle
+sdk-kmp
+docs
+e2e

@@ -98,11 +98,13 @@ func main() {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	srv := &http.Server{Addr: listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("canary: metrics listener: %v", err)
-		}
-	}()
+	if listen != "off" {
+		go func() {
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("canary: metrics listener: %v", err)
+			}
+		}()
+	}
 	log.Printf("canary: run %s, interval %s, metrics on %s", c.State().Run, cfg.Interval, listen)
 	_ = c.Run(ctx)
 	shutdown, cancel := context.WithTimeout(context.Background(), 2*time.Second)
