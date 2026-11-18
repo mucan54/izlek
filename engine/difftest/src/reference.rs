@@ -242,11 +242,16 @@ fn person_ordered(
                 assert_eq!(best, k);
                 best = k + 1;
                 if k > 0 {
-                    // The chain that got here has the latest start `m`; its
-                    // previous step is the first row that reached step k with
-                    // that start.
+                    // The chain that got here has the latest start `m`. In
+                    // strict mode its previous step is the previous row; in
+                    // ordered mode it is the first row that reached step k
+                    // with that start.
                     let m = f[k][i].unwrap();
-                    let prev = (0..i).find(|j| f[k - 1][*j] == Some(m)).expect("previous step of the chain");
+                    let prev = if strict {
+                        i - 1
+                    } else {
+                        (0..i).find(|j| f[k - 1][*j] == Some(m)).expect("previous step of the chain")
+                    };
                     durations[k] = Some((events[i].ts - events[prev].ts) as f64 / 1000.0);
                 }
             }

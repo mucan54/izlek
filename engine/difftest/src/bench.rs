@@ -334,7 +334,7 @@ pub async fn run(cfg: &BenchConfig) -> String {
                              AND e.event = 'cart' AND e.ts > a.t1 AND e.ts <= a.t1 + INTERVAL '7 days' GROUP BY 1, 2), \
                        c AS (SELECT b.person_key, min(e.ts) AS t3 FROM b JOIN events e ON e.person_key = b.person_key \
                              AND e.event = 'purchase' AND e.ts > b.t2 AND e.ts <= b.t1 + INTERVAL '7 days' GROUP BY 1) \
-                       SELECT (SELECT count(*) FROM a), (SELECT count(*) FROM b), (SELECT count(*) FROM c)";
+                       SELECT (SELECT count(*) FROM a) AS n1, (SELECT count(*) FROM b) AS n2, (SELECT count(*) FROM c) AS n3";
     let sql_first = measure(&svc, 1, Kind::Sql, &with(json!({"sql": first_touch})), cfg.runs).await;
     let note = sql_first
         .as_ref()

@@ -813,8 +813,13 @@ impl Battery {
 
 /// Generates one project for `seed` and runs the battery against it.
 pub async fn run_seed(seed: u64, battery: Battery) -> Tally {
-    let store = Store::memory();
-    let ds = generate(&store, &GenConfig::small(seed)).await;
+    run_seed_on(&Store::memory(), 1, seed, battery).await
+}
+
+/// Like [`run_seed`], against an existing store (e.g. an S3 endpoint). The
+/// project id must be unused in that store.
+pub async fn run_seed_on(store: &Store, project: u32, seed: u64, battery: Battery) -> Tally {
+    let ds = generate(store, &GenConfig { project, ..GenConfig::small(seed) }).await;
     let mut cfg = service_config();
     // Vary the execution strategy with the seed: person-range parallelism for
     // the ordered operators, and row filters inside vs. after the decoder.
@@ -822,7 +827,7 @@ pub async fn run_seed(seed: u64, battery: Battery) -> Tally {
         cfg.person_split = vec!["a:anon-04".into(), "u:user03".into(), "u:user09".into()];
     }
     cfg.pushdown_filters = !seed.is_multiple_of(3);
-    let svc = service_for(&store, cfg).await;
+    let svc = service_for(store, cfg).await;
     let mut rng = StdRng::seed_from_u64(seed ^ 0x5eed_cafe);
     let mut tally = Tally {
         seeds: 1,

@@ -114,22 +114,37 @@ pub fn unqualify(e: Expr) -> Result<Expr> {
 // Identity rewrite functions
 // ---------------------------------------------------------------------------
 
-/// `la_linked(person_key)` / `la_rewrite(person_key)`: whether an `a:` key has
-/// a link newer than the file's identity version, and the `u:` key it maps to.
+/// What an [`IdentityFn`] computes for a stored `person_key`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum IdentityOp {
+    /// `la_linked`: an `a:` key with a link newer than the file.
+    Linked,
+    /// `la_pending`: [`IdentityOp::Linked`], or a `u:` key that such a link
+    /// points to (a person whose row set grows through the rewrite).
+    Pending,
+    /// `la_rewrite`: the key after applying the newer links.
+    Rewrite,
+}
+
+/// Identity functions bound to one file's identity version.
 #[derive(Debug)]
 struct IdentityFn {
     map: Arc<IdentityMap>,
     after: u64,
-    rewrite: bool,
+    op: IdentityOp,
+    /// Users gaining rows (only for [`IdentityOp::Pending`]).
+    targets: Arc<std::collections::HashSet<String>>,
     signature: Signature,
 }
 
 impl IdentityFn {
-    fn udf(map: &Arc<IdentityMap>, after: u64, rewrite: bool) -> Arc<ScalarUDF> {
+    fn udf(snap: &Snapshot, after: u64, op: IdentityOp) -> Arc<ScalarUDF> {
+        let targets = if op == IdentityOp::Pending { snap.link_targets_after(after) } else { Default::default() };
         Arc::new(ScalarUDF::new_from_impl(Self {
-            map: Arc::clone(map),
+            map: Arc::clone(&snap.identity),
             after,
-            rewrite,
+            op,
+            targets: Arc::new(targets),
             signature: Signature::exact(vec![DataType::Utf8], Volatility::Immutable),
         }))
     }
@@ -137,29 +152,29 @@ impl IdentityFn {
 
 impl PartialEq for IdentityFn {
     fn eq(&self, o: &Self) -> bool {
-        Arc::ptr_eq(&self.map, &o.map) && self.after == o.after && self.rewrite == o.rewrite
+        Arc::ptr_eq(&self.map, &o.map) && self.after == o.after && self.op == o.op
     }
 }
 impl Eq for IdentityFn {}
 impl Hash for IdentityFn {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        (Arc::as_ptr(&self.map) as usize, self.after, self.rewrite).hash(state);
+        (Arc::as_ptr(&self.map) as usize, self.after, self.op).hash(state);
     }
 }
 
 impl ScalarUDFImpl for IdentityFn {
     fn name(&self) -> &str {
-        if self.rewrite {
-            "la_rewrite"
-        } else {
-            "la_linked"
+        match self.op {
+            IdentityOp::Linked => "la_linked",
+            IdentityOp::Pending => "la_pending",
+            IdentityOp::Rewrite => "la_rewrite",
         }
     }
     fn signature(&self) -> &Signature {
         &self.signature
     }
     fn return_type(&self, _: &[DataType]) -> Result<DataType> {
-        Ok(if self.rewrite { DataType::Utf8 } else { DataType::Boolean })
+        Ok(if self.op == IdentityOp::Rewrite { DataType::Utf8 } else { DataType::Boolean })
     }
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
         let n = args.number_rows;
@@ -168,44 +183,63 @@ impl ScalarUDFImpl for IdentityFn {
             ColumnarValue::Scalar(s) => s.to_array_of_size(n)?,
         };
         let keys = input.as_string::<i32>();
-        // Rows of one person are adjacent: remember the previous lookup.
-        let mut last: Option<(&str, Option<&str>)> = None;
-        let mut resolve = |i: usize| -> Option<&str> {
-            if keys.is_null(i) {
-                return None;
-            }
-            let pk = keys.value(i);
-            if let Some((p, v)) = last {
-                if p == pk {
-                    return v;
-                }
-            }
-            let v = pk.strip_prefix("a:").and_then(|anon| self.map.resolve_after(anon, self.after));
-            last = Some((pk, v));
-            v
-        };
-        let out: ArrayRef = if self.rewrite {
-            let mut b = StringBuilder::with_capacity(n, n * 16);
-            let mut buf = String::new();
-            for i in 0..n {
-                match resolve(i) {
-                    Some(user) => {
-                        buf.clear();
-                        buf.push_str("u:");
-                        buf.push_str(user);
-                        b.append_value(&buf);
+        let out: ArrayRef = match self.op {
+            IdentityOp::Rewrite => {
+                // Rows of one person are adjacent: remember the previous lookup.
+                let mut last: Option<(&str, Option<&str>)> = None;
+                let mut b = StringBuilder::with_capacity(n, n * 16);
+                let mut buf = String::new();
+                for i in 0..n {
+                    if keys.is_null(i) {
+                        b.append_null();
+                        continue;
                     }
-                    None if keys.is_null(i) => b.append_null(),
-                    None => b.append_value(keys.value(i)),
+                    let pk = keys.value(i);
+                    let user = match last {
+                        Some((p, v)) if p == pk => v,
+                        _ => {
+                            let v = pk.strip_prefix("a:").and_then(|anon| self.map.resolve_after(anon, self.after));
+                            last = Some((pk, v));
+                            v
+                        }
+                    };
+                    match user {
+                        Some(user) => {
+                            buf.clear();
+                            buf.push_str("u:");
+                            buf.push_str(user);
+                            b.append_value(&buf);
+                        }
+                        None => b.append_value(pk),
+                    }
                 }
+                Arc::new(b.finish())
             }
-            Arc::new(b.finish())
-        } else {
-            let mut b = BooleanBuilder::with_capacity(n);
-            for i in 0..n {
-                b.append_value(resolve(i).is_some());
+            IdentityOp::Linked | IdentityOp::Pending => {
+                let pending = self.op == IdentityOp::Pending;
+                let mut last: Option<(&str, bool)> = None;
+                let mut b = BooleanBuilder::with_capacity(n);
+                for i in 0..n {
+                    if keys.is_null(i) {
+                        b.append_value(false);
+                        continue;
+                    }
+                    let pk = keys.value(i);
+                    let hit = match last {
+                        Some((p, v)) if p == pk => v,
+                        _ => {
+                            let v = match pk.strip_prefix("a:") {
+                                Some(anon) => self.map.resolve_after(anon, self.after).is_some(),
+                                None => pending && pk.strip_prefix("u:").is_some_and(|u| self.targets.contains(u)),
+                            };
+                            last = Some((pk, v));
+                            v
+                        }
+                    };
+                    b.append_value(hit);
+                }
+                Arc::new(b.finish())
             }
-            Arc::new(b.finish())
         };
         Ok(ColumnarValue::Array(out))
     }
@@ -461,6 +495,21 @@ enum Variant {
     Unlinked(u64),
     /// `a:` rows with a newer link: rewritten and sorted.
     Linked(u64),
+    /// Rows of persons the rewrite does not touch at all (file order preserved).
+    Settled(u64),
+    /// Every row of the persons it does touch — the `a:` rows being rewritten
+    /// and the rows already stored under the target user: rewritten and sorted.
+    Pending(u64),
+}
+
+impl Variant {
+    /// Rows go through the key rewrite and a sort.
+    fn rewrites(self) -> Option<u64> {
+        match self {
+            Variant::Linked(iv) | Variant::Pending(iv) => Some(iv),
+            _ => None,
+        }
+    }
 }
 
 struct DayFilters {
@@ -636,6 +685,8 @@ struct Planner<'a> {
     filters_person: Vec<Expr>,
     /// Key range implied by `filters_person`, for file-level pruning.
     bounds: PersonBounds,
+    /// Whether any output expression or filter looks at `person_key`.
+    uses_person: bool,
     ordered: bool,
 }
 
@@ -667,24 +718,32 @@ impl Planner<'_> {
             Variant::Plain => scan_filters.extend(self.filters_person.iter().cloned()),
             Variant::Unlinked(iv) => {
                 scan_filters.extend(self.filters_person.iter().cloned());
-                let linked = IdentityFn::udf(&snap.identity, iv, false).call(vec![ident("person_key")]);
+                let linked = IdentityFn::udf(snap, iv, IdentityOp::Linked).call(vec![ident("person_key")]);
                 scan_filters.push(datafusion::logical_expr::not(linked));
             }
             Variant::Linked(iv) => {
                 // Unresolved keys sort first ("a:" < "u:"), so the range bound
                 // lets row-group statistics skip the rest of the file.
                 scan_filters.push(ident("person_key").lt(lit("a;")));
-                scan_filters.push(IdentityFn::udf(&snap.identity, iv, false).call(vec![ident("person_key")]));
+                scan_filters.push(IdentityFn::udf(snap, iv, IdentityOp::Linked).call(vec![ident("person_key")]));
+            }
+            Variant::Settled(iv) => {
+                scan_filters.extend(self.filters_person.iter().cloned());
+                let pending = IdentityFn::udf(snap, iv, IdentityOp::Pending).call(vec![ident("person_key")]);
+                scan_filters.push(datafusion::logical_expr::not(pending));
+            }
+            Variant::Pending(iv) => {
+                scan_filters.push(IdentityFn::udf(snap, iv, IdentityOp::Pending).call(vec![ident("person_key")]));
             }
         }
-        let late_filters: &[Expr] = if matches!(variant, Variant::Linked(_)) { &self.filters_person } else { &[] };
+        let late_filters: &[Expr] = if variant.rewrites().is_some() { &self.filters_person } else { &[] };
 
         // Columns to decode.
         let mut needed: BTreeSet<String> = BTreeSet::new();
         for e in scan_filters.iter().chain(late_filters).chain(layout.iter().map(|(e, _)| e)) {
             needed.extend(columns_of(e));
         }
-        if matches!(variant, Variant::Linked(_)) {
+        if variant.rewrites().is_some() {
             needed.insert("person_key".into());
         }
         let mut indices: Vec<usize> = needed.iter().map(|n| self.table.index_of(n)).collect::<Result<_, _>>()?;
@@ -725,9 +784,9 @@ impl Planner<'_> {
         if let Some(pred) = residual.into_iter().reduce(Expr::and) {
             plan = Arc::new(FilterExec::try_new(self.physical(&pred, &plan.schema())?, plan)?);
         }
-        if let Variant::Linked(iv) = variant {
+        if let Some(iv) = variant.rewrites() {
             let schema = plan.schema();
-            let rewrite = IdentityFn::udf(&snap.identity, iv, true).call(vec![ident("person_key")]);
+            let rewrite = IdentityFn::udf(snap, iv, IdentityOp::Rewrite).call(vec![ident("person_key")]);
             let exprs = schema
                 .fields()
                 .iter()
@@ -747,11 +806,66 @@ impl Planner<'_> {
             .map(|(e, name)| Ok((self.physical(e, &schema)?, name.clone())))
             .collect::<Result<Vec<_>>>()?;
         plan = Arc::new(ProjectionExec::try_new(exprs, plan)?);
-        if matches!(variant, Variant::Linked(_)) {
+        if variant.rewrites().is_some() {
             let ordering = sort_exprs(&plan.schema(), &[H_PERSON, H_TS, H_UUID])?;
             plan = Arc::new(SortExec::new(ordering, plan));
         }
         Ok(plan)
+    }
+
+    /// A day whose single file predates some identity links. No dedupe is
+    /// needed (uuids are unique within a file), so only the persons the
+    /// rewrite touches are re-sorted — together with the rows they already
+    /// had — and everything else streams through in file order. The two
+    /// streams hold disjoint persons, hence the merge needs `person_key` only
+    /// and the untouched rows never pay for `ts`/`uuid`.
+    fn single_file_rewrite(
+        &self,
+        file: &FileEntry,
+        day: &DayFilters,
+        out: &[(Expr, String)],
+        out_schema: &SchemaRef,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
+        let iv = file.identity_version;
+        let mut layout: Vec<(Expr, String)> = vec![(ident("person_key"), H_PERSON.to_owned())];
+        let mut mapping: Vec<usize> = Vec::with_capacity(out.len());
+        for (e, name) in out {
+            if matches!(e, Expr::Column(c) if c.name == "person_key") {
+                mapping.push(0);
+            } else {
+                mapping.push(layout.len());
+                layout.push((e.clone(), format!("__la_c{}_{name}", layout.len())));
+            }
+        }
+        let settled = self.file_stream(file, day, &layout, Variant::Settled(iv), true)?;
+        // The side stream carries the full sort key, dropped again after its sort.
+        let mut side_layout =
+            vec![layout[0].clone(), (ident("ts"), H_TS.to_owned()), (ident("uuid"), H_UUID.to_owned())];
+        side_layout.extend(layout[1..].iter().cloned());
+        let side = self.file_stream(file, day, &side_layout, Variant::Pending(iv), true)?;
+        let side_schema = side.schema();
+        let keep: Vec<(Arc<dyn PhysicalExpr>, String)> = std::iter::once(0)
+            .chain(3..side_layout.len())
+            .map(|i| {
+                (
+                    Arc::new(PhysColumn::new(side_schema.field(i).name(), i)) as Arc<dyn PhysicalExpr>,
+                    side_schema.field(i).name().clone(),
+                )
+            })
+            .collect();
+        let side: Arc<dyn ExecutionPlan> = Arc::new(ProjectionExec::try_new(keep, side)?);
+        let union = UnionExec::try_new(vec![align_schema(settled, &side.schema())?, side])?;
+        let ordering = sort_exprs(&union.schema(), &[H_PERSON])?;
+        let merged: Arc<dyn ExecutionPlan> = Arc::new(SortPreservingMergeExec::new(ordering, union));
+        let schema = merged.schema();
+        let exprs: Vec<(Arc<dyn PhysicalExpr>, String)> = mapping
+            .iter()
+            .zip(out_schema.fields())
+            .map(|(i, f)| {
+                (Arc::new(PhysColumn::new(schema.field(*i).name(), *i)) as Arc<dyn PhysicalExpr>, f.name().clone())
+            })
+            .collect();
+        Ok(Arc::new(ProjectionExec::try_new(exprs, merged)?))
     }
 
     /// Plan for one day: `(single-partition plan, files read)`, or `None`
@@ -764,6 +878,19 @@ impl Planner<'_> {
             return Ok(None);
         }
         let day = DayFilters { tombstones: tombstone_filters(snap, manifest.tombstone_ts) };
+        let rows: u64 = files.iter().map(|f| f.rows).sum();
+        if let [file] = files.as_slice() {
+            let stale = file.identity_version < snap.max_link_version && file.min_person.as_str() < "a;";
+            if stale && !self.ordered && !self.uses_person {
+                // Nothing in the request can tell which person a row belongs
+                // to, and a single file has no duplicates: read it as it is.
+                let plan = self.file_stream(file, &day, out, Variant::Plain, false)?;
+                return Ok(Some((plan, 1, rows)));
+            }
+            if stale {
+                return Ok(Some((self.single_file_rewrite(file, &day, out, out_schema)?, 1, rows)));
+            }
+        }
         let mut streams: Vec<(&FileEntry, Variant)> = Vec::new();
         for f in &files {
             // Rows that keep their stored key can only match if the file's key
@@ -788,7 +915,6 @@ impl Planner<'_> {
         let mut read: Vec<&str> = streams.iter().map(|(f, _)| f.key.as_str()).collect();
         read.dedup();
         let n_files = read.len();
-        let rows: u64 = files.iter().map(|f| f.rows).sum();
         if let [(file, Variant::Plain)] = streams.as_slice() {
             let plan = self.file_stream(file, &day, out, Variant::Plain, self.ordered)?;
             return Ok(Some((plan, 1, rows)));
@@ -838,8 +964,17 @@ pub fn plan_scan(cx: &ScanContext, state: &dyn Session, req: &ScanRequest) -> Re
     let (filters_person, filters_other): (Vec<Expr>, Vec<Expr>) =
         req.filters.iter().cloned().partition(|e| columns_of(e).contains("person_key"));
     let bounds = PersonBounds::from_filters(&filters_person);
-    let planner =
-        Planner { cx, state, table: Arc::clone(&table), filters_other, filters_person, bounds, ordered: req.ordered };
+    let uses_person = !filters_person.is_empty() || req.exprs.iter().any(|(e, _)| columns_of(e).contains("person_key"));
+    let planner = Planner {
+        cx,
+        state,
+        table: Arc::clone(&table),
+        filters_other,
+        filters_person,
+        bounds,
+        uses_person,
+        ordered: req.ordered,
+    };
 
     // Output schema, derived from the expressions.
     let mut fields = Vec::with_capacity(req.exprs.len());

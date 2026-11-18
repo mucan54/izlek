@@ -41,6 +41,8 @@ impl<T: Clone> Timed<T> {
 struct IdentityState {
     map: Arc<IdentityMap>,
     max_link_version: u64,
+    /// `(link version, user id)` of every link, newest first.
+    links: Arc<Vec<(u64, String)>>,
 }
 
 #[derive(Clone)]
@@ -84,6 +86,8 @@ pub struct Snapshot {
     pub identity: Arc<IdentityMap>,
     /// Highest link version in `identity`: files at or above it need no rewrite.
     pub max_link_version: u64,
+    /// `(link version, user id)` of every link, newest first.
+    pub links: Arc<Vec<(u64, String)>>,
     pub persons: Option<Arc<PersonTable>>,
     pub tombstones: Arc<Vec<Tombstone>>,
     pub tombstone_digest: Arc<str>,
@@ -114,6 +118,12 @@ impl Snapshot {
 
     pub fn tombstone_set(&self, after_ts: i64) -> TombstoneSet {
         TombstoneSet::build(&self.tombstones, &self.identity, after_ts)
+    }
+
+    /// Users that gained a link after identity version `after`: the persons
+    /// whose row set changes when a file written at `after` is rewritten.
+    pub fn link_targets_after(&self, after: u64) -> std::collections::HashSet<String> {
+        self.links.iter().take_while(|l| l.0 > after).map(|l| l.1.clone()).collect()
     }
 
     pub fn persons(&self) -> Arc<PersonTable> {
@@ -300,13 +310,16 @@ impl Engine {
         let mut map = slot.as_ref().map(|t| t.value.map.clone()).unwrap_or_default();
         let before = map.version();
         let latest = manifest::latest_version(&self.store, &keys::identity_manifest_dir(project)).await?;
-        let mut max_link_version = slot.as_ref().map(|t| t.value.max_link_version).unwrap_or(0);
+        let mut links = slot.as_ref().map(|t| t.value.links.clone()).unwrap_or_default();
         if latest != before || slot.is_none() {
             // Copy-on-write: queries in flight keep the map they planned with.
             Arc::make_mut(&mut map).refresh(&self.store, project).await?;
-            max_link_version = map.iter().map(|l| l.version).max().unwrap_or(0);
+            let mut all: Vec<(u64, String)> = map.iter().map(|l| (l.version, l.user_id)).collect();
+            all.sort_by_key(|l| std::cmp::Reverse(l.0));
+            links = Arc::new(all);
         }
-        let state = IdentityState { map, max_link_version };
+        let max_link_version = links.first().map_or(0, |l| l.0);
+        let state = IdentityState { map, max_link_version, links };
         *slot = Some(Timed { at: Instant::now(), value: state.clone() });
         Ok(state)
     }
@@ -367,6 +380,7 @@ impl Engine {
             days,
             identity: identity.map,
             max_link_version: identity.max_link_version,
+            links: identity.links,
             persons,
             tombstones: tombs.list,
             tombstone_digest: tombs.digest,

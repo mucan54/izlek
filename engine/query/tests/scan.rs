@@ -496,3 +496,68 @@ async fn files_outside_a_person_filter_are_not_opened() {
     let (rows, files) = run(serde_json::json!({"prop": "person_key", "op": "ne", "value": "u:carol"})).await;
     assert_eq!((rows.len(), files), (3, 2));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compacted_day_with_newer_links_resorts_only_the_touched_persons() {
+    let store = Store::memory();
+    let d = day_ms(DAY1);
+    // One L2 file written before the links below existed.
+    add_file(
+        &store,
+        FileSpec::l0(P, DAY1, "00000001-000").level(2).identity(0),
+        vec![
+            ev("anonA", None, d + 10, "view"),
+            ev("anonA", None, d + 30, "click").uuid(0x20),
+            ev("anonB", None, d + 20, "view"),
+            ev("anonZ", None, d + 5, "view"),
+            ev("dev", Some("alice"), d + 1, "login"),
+            // Same millisecond as anonA's click: (ts, uuid) decides, across the two keys.
+            ev("dev", Some("alice"), d + 30, "pay-first").uuid(0x10),
+            ev("dev", Some("alice"), d + 30, "pay-last").uuid(0x30),
+            ev("dev2", Some("carol"), d + 7, "view"),
+        ],
+    )
+    .await;
+    link(&store, P, 1, &[("anonA", "alice"), ("anonB", "bob")]).await;
+    let engine = engine(&store).await;
+    let cx1 = cx(&engine, DAY1, DAY1).await;
+    let req = ScanRequest { exprs: cols(&["person_key", "ts", "event"]), filters: vec![], ordered: true };
+    let got = triples(&collect(&cx1, &req).await, d);
+    assert_eq!(
+        got,
+        [
+            t("a:anonZ", 5, "view"),
+            t("u:alice", 1, "login"),
+            t("u:alice", 10, "view"),
+            t("u:alice", 30, "pay-first"),
+            t("u:alice", 30, "click"),
+            t("u:alice", 30, "pay-last"),
+            t("u:bob", 20, "view"),
+            t("u:carol", 7, "view"),
+        ]
+    );
+    // Two reads of the file, one side sort, a key-only merge, no dedupe.
+    let summary = cx1.plan_summaries().join(" | ");
+    assert!(summary.contains("DataSourceExec×2") && summary.contains("SortExec×1"), "{summary}");
+    assert!(summary.contains("SortPreservingMergeExec×1") && !summary.contains("DedupExec"), "{summary}");
+
+    // Filters on the key see the rewritten value on both sides of the split.
+    let f = Filter::parse(
+        &serde_json::json!({"prop": "person_key", "op": "in", "value": ["u:alice", "u:carol", "a:anonA"]}),
+    )
+    .unwrap();
+    let req = ScanRequest {
+        exprs: cols(&["person_key", "ts", "event"]),
+        filters: vec![cx1.compiler.compile(&f)],
+        ordered: true,
+    };
+    assert_eq!(triples(&collect(&cx1, &req).await, d).len(), 6);
+
+    // A request that cannot observe the key reads the file once, as it is.
+    let cx2 = cx(&engine, DAY1, DAY1).await;
+    let req = ScanRequest { exprs: cols(&["ts", "event"]), filters: vec![], ordered: false };
+    let n: usize = collect(&cx2, &req).await.iter().map(|b| b.num_rows()).sum();
+    assert_eq!(n, 8);
+    let summary = cx2.plan_summaries().join(" | ");
+    assert!(summary.contains("DataSourceExec×1") && !summary.contains("SortExec"), "{summary}");
+}

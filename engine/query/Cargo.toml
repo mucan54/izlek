@@ -29,7 +29,6 @@ bytes.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
-thiserror.workspace = true
 sha2.workspace = true
 url.workspace = true
 tracing.workspace = true
@@ -41,6 +40,5 @@ base64 = "0.22"
 
 [dev-dependencies]
 tempfile.workspace = true
-rand.workspace = true
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

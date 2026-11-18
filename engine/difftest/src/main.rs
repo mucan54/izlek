@@ -16,6 +16,11 @@ struct Cli {
     /// Fewer queries per seed.
     #[arg(long)]
     quick: bool,
+    /// Run against the store configured through `LA_STORE_URL` / `LA_S3_*`
+    /// instead of an in-memory one (each seed uses project id = seed, which
+    /// must not exist there yet).
+    #[arg(long)]
+    store_env: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -27,8 +32,9 @@ enum Command {
     /// Write one small generated project into a directory store (for manual
     /// testing of `la-query`) and register a query key for it.
     Gen {
+        /// Target directory; without it the store from `LA_STORE_URL` is used.
         #[arg(long)]
-        dir: std::path::PathBuf,
+        dir: Option<std::path::PathBuf>,
         #[arg(long, default_value_t = 1)]
         seed: u64,
         #[arg(long, default_value = "sk_demo")]
@@ -66,8 +72,13 @@ async fn main() {
             let battery = if cli.quick { Battery::QUICK } else { Battery::FULL };
             let started = std::time::Instant::now();
             let mut tally = Tally::default();
+            let shared = cli.store_env.then(|| la_core::Store::from_env().expect("LA_STORE_URL"));
             for seed in cli.start..cli.start + cli.seeds {
-                tally.add(&run_seed(seed, battery).await);
+                let t = match &shared {
+                    Some(store) => la_difftest::runner::run_seed_on(store, seed as u32, seed, battery).await,
+                    None => run_seed(seed, battery).await,
+                };
+                tally.add(&t);
                 if tally.seeds % 25 == 0 {
                     eprintln!("{} seeds ok ({:.1}s)", tally.seeds, started.elapsed().as_secs_f64());
                 }
@@ -75,13 +86,16 @@ async fn main() {
             println!("differential run passed: {tally:?} in {:.1}s", started.elapsed().as_secs_f64());
         }
         Some(Command::Gen { dir, seed, key }) => {
-            let store = la_core::Store::local(&dir).expect("store directory");
+            let store = match &dir {
+                Some(d) => la_core::Store::local(d).expect("store directory"),
+                None => la_core::Store::from_env().expect("LA_STORE_URL"),
+            };
             let ds = la_difftest::gen::generate(&store, &la_difftest::gen::GenConfig::small(seed)).await;
             la_difftest::runner::register_key(&store, &key, ds.project).await;
             println!(
-                "project {} in file://{}: {} logical events ({} alive), days {}..{}, key {key}\n{:?}",
+                "project {} in {}: {} logical events ({} alive), days {}..{}, key {key}\n{:?}",
                 ds.project,
-                dir.display(),
+                store.describe(),
                 ds.stats.logical_events,
                 ds.rows.len(),
                 ds.days[0],
