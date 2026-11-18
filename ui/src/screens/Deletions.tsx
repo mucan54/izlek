@@ -34,7 +34,13 @@ export const Deletions = () => {
   // pending requests complete in the background; keep the status current
   useInterval(list.reload, 15_000, (list.data ?? []).some((d) => d.status == 'pending'))
 
-  if (!can(role, 'admin')) return <Empty title={S.deletions.forbidden} />
+  if (!can(role, 'admin'))
+    return (
+      <>
+        <PageHead title={S.deletions.title} />
+        <Empty title={S.deletions.forbidden} />
+      </>
+    )
   return (
     <>
       <PageHead title={S.deletions.title} sub={S.deletions.sub} />

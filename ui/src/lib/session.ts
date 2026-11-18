@@ -1,8 +1,9 @@
 // App-wide and project-wide context.
 import { createContext } from 'preact'
-import { useContext } from 'preact/hooks'
+import { useContext, useEffect, useState } from 'preact/hooks'
 import type { Api } from './api'
-import type { Me, OrgRef, Project, Role, Schema } from './types'
+import { asList } from './api'
+import type { Me, Member, OrgRef, Project, Role, Schema } from './types'
 
 export interface AppState {
   api: Api
@@ -30,3 +31,24 @@ export interface ProjectState {
 }
 export const ProjectCtx = createContext<ProjectState>(null as unknown as ProjectState)
 export const useProject = (): ProjectState => useContext(ProjectCtx)
+
+/**
+ * Display name for an audit/flag-version `actor`: the member's e-mail when the
+ * member list is readable, otherwise the raw id (user id or key id).
+ */
+export const useActorName = (orgId: string | number | undefined): ((actor: string | number) => string) => {
+  const { api } = useApp()
+  const [names, setNames] = useState<Map<string, string>>(new Map())
+  useEffect(() => {
+    if (orgId === undefined) return
+    let alive = true
+    api.get(`/api/orgs/${encodeURIComponent(String(orgId))}/members`).then(
+      (list) => alive && setNames(new Map(asList<Member>(list).map((m) => [String(m.user_id), m.email]))),
+      () => undefined, // not allowed or unavailable: ids are shown as they are
+    )
+    return () => {
+      alive = false
+    }
+  }, [api, orgId])
+  return (actor) => names.get(String(actor)) ?? String(actor)
+}

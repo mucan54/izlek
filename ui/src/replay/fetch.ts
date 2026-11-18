@@ -57,10 +57,16 @@ export const inflate = async (bytes: Uint8Array, seq = 0): Promise<Uint8Array> =
     }
   }
   if (format == 'zstd') {
+    // constructing the stream is the feature test: unsupported formats throw a TypeError
     try {
-      return await pipe(bytes, 'zstd')
+      new DecompressionStream('zstd' as CompressionFormat)
     } catch {
       throw new ReplayLoadError('zstd_unsupported', seq)
+    }
+    try {
+      return await pipe(bytes, 'zstd')
+    } catch (e) {
+      throw new ReplayLoadError('bad_chunk', seq, String(e))
     }
   }
   throw new ReplayLoadError('bad_chunk', seq, 'unknown container')

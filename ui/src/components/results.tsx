@@ -38,6 +38,8 @@ export const TrendsView = ({ query, result, compact }: { query: WithUi<TrendsQue
   )
   if (!result.buckets.length || !series.length) return <Empty title={S.query.noData}>{S.query.noDataHint}</Empty>
   const integer = query.series.every((s) => s.agg == 'count' || s.agg == 'unique')
+  // one additive measure split by a breakdown is a whole and its parts: stack it
+  const stacked = hasBreakdown && query.series.length == 1 && (query.series[0].agg == 'count' || query.series[0].agg == 'sum')
   return (
     <div class="result">
       <TimeChart
@@ -47,6 +49,7 @@ export const TrendsView = ({ query, result, compact }: { query: WithUi<TrendsQue
         series={series}
         height={compact ? 190 : 280}
         integer={integer}
+        stacked={stacked}
         ariaLabel={S.query.trendsAria(series.length, result.buckets.length)}
       />
       {!compact && (

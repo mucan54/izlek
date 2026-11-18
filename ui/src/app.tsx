@@ -8,7 +8,7 @@ import { can } from './lib/roles'
 import { Link, matchPath, navigate, useLocation } from './lib/router'
 import { AppCtx, ProjectCtx, useApp, type AppState, type ProjectState } from './lib/session'
 import type { Me, Project, Schema } from './lib/types'
-import { Button, Empty, ErrorNote, Spinner, Toaster } from './components/ui'
+import { Button, Empty, ErrorNote, PageHead, Spinner, Toaster } from './components/ui'
 import { Account, Login, Setup } from './screens/Auth'
 import { Projects } from './screens/Projects'
 import { Events } from './screens/Events'
@@ -101,8 +101,18 @@ export const App = () => {
   )
 }
 
-const NavLink = ({ href, path, children }: { href: string; path: string; children: ComponentChildren }) => {
-  const active = path == href || path.startsWith(href + '/')
+/** Page-level "nothing here" with a heading and a way out. */
+const Missing = ({ title, href, label }: { title: string; href: string; label: string }) => (
+  <>
+    <PageHead title={title} />
+    <Empty title={title}>
+      <Link href={href}>{label}</Link>
+    </Empty>
+  </>
+)
+
+const NavLink = ({ href, path, also, children }: { href: string; path: string; also?: string; children: ComponentChildren }) => {
+  const active = path == href || path.startsWith(href + '/') || (!!also && path.startsWith(also + '/'))
   return (
     <Link href={href} class={`nav-link${active ? ' nav-active' : ''}`} aria-current={active ? 'page' : undefined}>
       {children}
@@ -134,13 +144,13 @@ const Shell = () => {
   const p = (sub: string) => `/p/${navProject?.id}/${sub}`
   let page: ComponentChildren
   if (inProject) {
-    page = project ? <ProjectRoutes project={project} path={path} key={project.id} /> : <Empty title={S.shell.projectNotFound}>{<Link href="/projects">{S.nav.projects}</Link>}</Empty>
+    page = project ? <ProjectRoutes project={project} path={path} key={project.id} /> : <Missing title={S.shell.projectNotFound} href="/projects" label={S.nav.projects} />
   } else if (path == '/projects') page = <Projects />
   else if (path == '/account') page = <Account />
   else if (inOrg && org && matchPath('/org/:oid/members', path)) page = <Members org={org} key={org.id} />
   else if (inOrg && org && matchPath('/org/:oid/audit', path)) page = <Audit org={org} key={org.id} />
   else if (path == '/' || path == '') page = <Spinner />
-  else page = <Empty title={S.shell.notFound}>{<Link href="/">{S.shell.home}</Link>}</Empty>
+  else page = <Missing title={S.shell.notFound} href="/" label={S.shell.home} />
 
   return (
     <div class="shell">
@@ -195,7 +205,7 @@ const Shell = () => {
               <NavLink href={p('events')} path={path}>
                 {S.nav.events}
               </NavLink>
-              <NavLink href={p('persons')} path={path}>
+              <NavLink href={p('persons')} path={path} also={p('replay')}>
                 {S.nav.persons}
               </NavLink>
               <p class="nav-title">{S.nav.manage}</p>
@@ -285,7 +295,7 @@ const ProjectRoutes = ({ project, path }: { project: Project; path: string }) =>
   else if (m('/settings')) page = <Settings tab="general" />
   else if ((params = m('/settings/:tab'))) page = <Settings tab={params.tab} />
   else if (m('/deletions')) page = <Deletions />
-  else page = <Empty title={S.shell.notFound} />
+  else page = <Missing title={S.shell.notFound} href={state.to('dashboards')} label={S.nav.dashboards} />
 
   return <ProjectCtx.Provider value={state}>{page}</ProjectCtx.Provider>
 }

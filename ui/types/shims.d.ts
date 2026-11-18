@@ -25,6 +25,8 @@ declare module 'node:fs' {
 }
 declare module 'node:zlib' {
   export function gzipSync(data: Uint8Array): Uint8Array
+  /** Node ≥ 22.15 */
+  export const zstdCompressSync: ((data: Uint8Array) => Uint8Array) | undefined
 }
 declare module '*.mjs'
 

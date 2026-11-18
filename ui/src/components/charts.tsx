@@ -26,10 +26,12 @@ interface Props {
   height?: number
   /** all values are whole numbers (counts): no fractional ticks */
   integer?: boolean
+  /** bars only: stack the series (parts of one additive whole) instead of grouping them */
+  stacked?: boolean
   ariaLabel: string
 }
 
-export const TimeChart = ({ type, labels, titles, series, height = 260, integer, ariaLabel }: Props) => {
+export const TimeChart = ({ type, labels, titles, series, height = 260, integer, stacked, ariaLabel }: Props) => {
   const [ref, width] = useWidth<HTMLDivElement>(720)
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   const [hover, setHover] = useState<number | null>(null)
@@ -39,7 +41,10 @@ export const TimeChart = ({ type, labels, titles, series, height = 260, integer,
   const shown = slots.filter((s) => !hidden.has(s.key))
   const n = labels.length
 
-  const all = shown.flatMap((s) => s.values).filter((v): v is number => v != null)
+  const stack = type == 'bar' && !!stacked
+  const all = stack
+    ? labels.map((_, i) => shown.reduce((a, s) => a + Math.max(0, s.values[i] ?? 0), 0))
+    : shown.flatMap((s) => s.values).filter((v): v is number => v != null)
   const axis = niceAxis(Math.min(0, ...all), Math.max(0, ...all), height > 200 ? 5 : 3, { integer })
   const tickText = fmtAxis(axis.ticks)
   const left = Math.max(28, Math.max(...tickText.map((t) => t.length)) * 7 + 12)
@@ -76,6 +81,20 @@ export const TimeChart = ({ type, labels, titles, series, height = 260, integer,
     const r = Math.min(4, barWidth / 2, Math.abs(base - tip))
     const dir = tip <= base ? 1 : -1 // rounded data end, square at the baseline
     return `M${xa},${base}V${tip + r * dir}Q${xa},${tip} ${xa + r},${tip}H${xa + barWidth - r}Q${xa + barWidth},${tip} ${xa + barWidth},${tip + r * dir}V${base}Z`
+  }
+
+  /** Stacked segments for bucket `i`, bottom to top, with a 1px surface gap between them. */
+  const stackWidth = Math.max(2, Math.min(24, bands.step * 0.7))
+  const segments = (i: number) => {
+    let sum = 0
+    return shown.flatMap((s) => {
+      const v = Math.max(0, s.values[i] ?? 0)
+      if (!v) return []
+      const y0 = y(sum)
+      sum += v
+      const y1 = y(sum)
+      return y0 - y1 < 0.5 ? [] : [{ slot: s.slot, key: s.key, x: bands.center(i) - stackWidth / 2, y: y1, h: Math.max(0.5, y0 - y1 - (y0 - y1 > 3 ? 1 : 0)) }]
+    })
   }
 
   const move = (clientX: number, target: Element) => {
@@ -161,7 +180,15 @@ export const TimeChart = ({ type, labels, titles, series, height = 260, integer,
                   {hover != null && s.values[hover] != null && <circle class="dot dot-hover" cx={bands.center(hover)} cy={y(s.values[hover] as number)} r={4.5} />}
                 </g>
               ))
-            : shown.map((s, k) => (
+            : stack
+              ? labels.map((_, i) => (
+                  <g key={i}>
+                    {segments(i).map((seg) => (
+                      <rect class={`bar s${seg.slot}`} key={seg.key} x={seg.x} y={seg.y} width={stackWidth} height={seg.h} />
+                    ))}
+                  </g>
+                ))
+              : shown.map((s, k) => (
                 <g key={s.key} class={`s${s.slot}`}>
                   {s.values.map((v, i) => (v != null && v != 0 ? <path class="bar" key={i} d={bar(i, k, v)} /> : null))}
                 </g>

@@ -44,11 +44,10 @@ export interface ChunkInput {
 export const DEFAULT_IDLE_MS = 3000
 
 /**
- * Merges decoded chunks into one timeline. Chunks are ordered by `seq`;
- * frame times are absolute (`start_ts` plus the running sum of `dt`, which
- * the decoder has already reduced for skipped unknown frames only when asked —
- * here we recompute from `dt`, so pass frames decoded with `withTime` when
- * unknown kinds may be present; `t` on a frame wins over the running sum).
+ * Merges decoded chunks into one timeline, ordered by `seq`. A frame's time
+ * is its absolute `t` when the decoder supplied one (`decodeChunk(bytes,
+ * true)`, which also counts the `dt` of skipped unknown frames); otherwise
+ * `start_ts` plus the running sum of `dt`.
  */
 export const buildTimeline = (inputs: ChunkInput[], idleMs = DEFAULT_IDLE_MS): Timeline => {
   const sorted = [...inputs].sort((a, b) => a.chunk.seq - b.chunk.seq)

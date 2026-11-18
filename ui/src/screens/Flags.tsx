@@ -9,7 +9,7 @@ import { fmtAgo, fmtDateTime } from '../lib/format'
 import { useAction, useAsync } from '../lib/hooks'
 import { can } from '../lib/roles'
 import { Link, navigate } from '../lib/router'
-import { useApp, useProject } from '../lib/session'
+import { useActorName, useApp, useProject } from '../lib/session'
 import type { Flag, FlagVersion, Rule } from '../lib/types'
 import { FilterEditor, flagSuggest } from '../components/FilterEditor'
 import { AsyncView, Badge, Button, Card, ConfirmButton, Empty, ErrorNote, Field, Input, PageHead, Select, Spinner, Switch, Tabs, toast } from '../components/ui'
@@ -336,6 +336,7 @@ const Preview = ({ flagKey, dirty }: { flagKey: string; dirty: boolean }) => {
 const History = ({ flagKey, stamp, onRestore, canWrite }: { flagKey: string; stamp: number; onRestore: (f: Flag) => void; canWrite: boolean }) => {
   const project = useProject()
   const app = useApp()
+  const actorName = useActorName(project.project.org_id)
   const versions = useAsync(
     async (signal) => asList<FlagVersion>(await app.api.get(`${project.base}/flags/${encodeURIComponent(flagKey)}/versions`, { signal })).sort((a, b) => b.version - a.version),
     [project.base, flagKey, stamp],
@@ -367,7 +368,7 @@ const History = ({ flagKey, stamp, onRestore, canWrite }: { flagKey: string; sta
                       v{v.version} {i == 0 && <Badge kind="accent">{S.flags.current}</Badge>}
                     </td>
                     <td class="nowrap">{fmtDateTime(v.ts)}</td>
-                    <td>{String(v.actor)}</td>
+                    <td>{actorName(v.actor)}</td>
                     <td>
                       <Badge kind={v.flag.enabled ? 'ok' : 'neutral'}>{v.flag.enabled ? S.common.on : S.common.off}</Badge>
                     </td>

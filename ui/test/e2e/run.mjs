@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import assert from 'node:assert/strict'
 import { createMockServer } from '../../mock/server.mjs'
+import { evalFlag } from '../../mock/expr.mjs'
 import { totp } from '../../mock/totp.mjs'
 import { REPLAY_SESSION, REPLAY_SESSION_ZSTD } from '../../mock/data.mjs'
 
@@ -95,6 +96,14 @@ const logout = async () => {
 const noOverflow = async () => {
   const [scroll, width] = await page.evaluate(() => [document.documentElement.scrollWidth, window.innerWidth])
   assert.ok(scroll <= width, `page scrolls horizontally: ${scroll} > ${width}`)
+}
+/** Polls a Node-side condition (e.g. requests seen so far). */
+const until = async (condition, what, timeout = 8000) => {
+  const end = Date.now() + timeout
+  while (!condition()) {
+    if (Date.now() > end) throw new Error('timed out waiting: ' + what)
+    await new Promise((r) => setTimeout(r, 25))
+  }
 }
 /** Runs `fn` and returns the body of the query it triggers. */
 const queryDuring = async (endpoint, fn) => {
@@ -359,7 +368,7 @@ await step('SQL insight: editor, API error message, result grid; rename and save
   assert.equal(mock.db.insights.length, 5)
   await page.getByRole('button', { name: 'Sil', exact: true }).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Sil', exact: true }).click()
-  await heading('Insight’lar').waitFor()
+  await page.waitForURL(/\/insights$/)
   await page.locator('tbody tr').nth(3).waitFor()
   assert.equal(mock.db.insights.length, 4)
   assert.equal(await page.locator('tbody tr').count(), 4)
@@ -392,8 +401,11 @@ await step('dashboard: add the three insights, tiles re-run their queries, reord
   const funnelTile = page.locator('.tile', { hasText: 'Kayıt → satın alma' })
   await funnelTile.getByRole('button', { name: 'Öne al' }).click()
   await page.waitForFunction(() => document.querySelector('.tile h2')?.textContent == 'Kayıt → satın alma')
+  // the UI updates optimistically: wait for the PUT itself before looking at what the server stored
+  const saved = page.waitForResponse((r) => r.request().method() == 'PUT' && /\/dashboards\/\d+$/.test(new URL(r.url()).pathname))
   await funnelTile.getByLabel('Genişlik').selectOption('12')
   await page.waitForFunction(() => document.querySelector('.tile')?.classList.contains('tile-w12'))
+  assert.equal((await saved).status(), 200)
   await page.getByRole('button', { name: 'Düzenlemeyi bitir' }).click()
   const stored = mock.db.dashboards[0].items
   assert.deepEqual(
@@ -407,8 +419,9 @@ await step('dashboard: add the three insights, tiles re-run their queries, reord
   // refresh re-runs every tile; identical queries come back from the result cache
   const n = queries.length
   await page.getByRole('button', { name: 'Yenile' }).click()
+  await until(() => queries.length - n == 3, 'each of the three tiles re-runs its query')
   await page.waitForFunction(() => [...document.querySelectorAll('.tile-foot')].length == 3 && [...document.querySelectorAll('.tile-foot')].every((f) => f.textContent.includes('önbellekten')))
-  assert.equal(queries.length - n, 3)
+  assert.equal(queries.length - n, 3, 'and only once')
   assert.ok(queries.length > before)
   await page.locator('.tile .chart svg').waitFor()
   await shot('12-dashboard')
@@ -453,18 +466,16 @@ await step('flag: two variants must sum to 100%, create, evaluate preview, histo
 
   // preview: the server-side evaluation, for a few users
   await page.getByRole('tab', { name: 'Önizleme' }).click()
-  const seen = new Set()
-  for (const user of ['user-1', 'user-2', 'user-3', 'user-4', 'user-5', 'user-6']) {
+  // The salt is random per flag, so pick users by the reference algorithm: one per variant, plus a few more.
+  const expected = (user) => evalFlag(flag, { platform: 'ios', app_version: '3.2.0' }, user, '')
+  const pool = Array.from({ length: 200 }, (_, i) => `user-${i + 1}`)
+  const users = [pool.find((u) => expected(u) == 'control'), pool.find((u) => expected(u) == 'test'), 'user-7', 'user-8']
+  assert.ok(users[0] && users[1], 'both variants occur among 200 users')
+  for (const user of users) {
     await page.getByLabel('Kullanıcı kimliği').fill(user)
     await page.getByRole('button', { name: 'Değerlendir' }).click()
-    const out = page.getByTestId('eval-result')
-    await out.waitFor()
-    const text = await out.innerText()
-    const m = /Sonuç: "(control|test)" \(varyant\)/.exec(text)
-    assert.ok(m, text)
-    seen.add(m[1])
+    await page.getByTestId('eval-result').filter({ hasText: `Sonuç: "${expected(user)}" (varyant)` }).waitFor()
   }
-  assert.deepEqual([...seen].sort(), ['control', 'test'], 'both variants show up across users')
   await shot('15-flag-preview')
   // a user the rule does not match gets the default
   await page.getByLabel('Özellikler (JSON)').fill('{ "platform": "android" }')
@@ -580,6 +591,8 @@ await step('replay: chunks download in order, the canvas changes while playing, 
   const playing2 = await snap()
   assert.notEqual(playing2, playing1, 'and keeps changing between later frames')
   await page.getByRole('button', { name: 'Duraklat' }).click()
+  await page.getByRole('button', { name: 'Oynat' }).waitFor()
+  await page.waitForTimeout(80) // let an already scheduled frame land
   const paused = await time()
   await page.waitForTimeout(300)
   assert.equal(await time(), paused, 'pause stops the clock')
@@ -611,7 +624,8 @@ await step('replay: chunks download in order, the canvas changes while playing, 
   await page.getByRole('button', { name: 'Oynat' }).click()
   await page.waitForTimeout(900)
   const slow = await time()
-  assert.ok(slow > 14000 && slow < 20000, `at 4× without skipping, 0.9 s ≈ 3.6 s of recording (at ${slow})`)
+  // skipping would have jumped to ≥ 23.8 s at once; at 4× the idle stretch takes 2.6 s of real time to cross
+  assert.ok(slow > 14000 && slow < 23500, `at 4× without skipping, 0.9 s ≈ 3.6 s of recording (at ${slow})`)
   await page.getByRole('button', { name: 'Duraklat' }).click()
   // runs to the end and stops
   await page.getByLabel('Kayıt konumu').fill('33000')
@@ -622,17 +636,41 @@ await step('replay: chunks download in order, the canvas changes while playing, 
   await noOverflow()
 })
 
-await step('replay: a zstd session plays, or says clearly why it cannot', async () => {
+await step('replay: zstd chunks play where the browser can decode them; otherwise a clear message', async () => {
+  // 1) as served by the query service (Content-Encoding: zstd)
   await go(`/p/${pid}/replay/${REPLAY_SESSION_ZSTD}`)
   const canvas = page.locator('canvas.replay-canvas')
   const note = page.getByText('zstd ile sıkıştırılmış ve bu tarayıcı zstd açamıyor')
   await canvas.or(note).first().waitFor()
-  const played = await canvas.count()
-  console.log(`      (this Chromium ${played ? 'decoded the zstd chunks' : 'cannot decode zstd: the message is shown'})`)
-  if (!played) {
-    assert.match(await page.getByRole('alert').innerText(), /5 parçadan 5 tanesi/)
-    await shot('23-replay-zstd')
+  console.log(`      (this Chromium ${(await canvas.count()) ? 'decodes' : 'cannot decode'} Content-Encoding: zstd)`)
+
+  // 2) a browser without zstd: bodies arrive still compressed and DecompressionStream refuses the format
+  mock.hooks.rawReplay = true
+  const old = await context.newPage()
+  await old.addInitScript(() => {
+    const Native = window.DecompressionStream
+    window.DecompressionStream = class extends Native {
+      constructor(format) {
+        if (format == 'zstd') throw new TypeError('Unsupported compression format')
+        super(format)
+      }
+    }
+  })
+  try {
+    await old.goto(`${base}/p/${pid}/replay/${REPLAY_SESSION_ZSTD}`)
+    const alert = old.getByRole('alert').filter({ hasText: 'zstd' })
+    await alert.waitFor()
+    assert.match(await alert.innerText(), /5 parçadan 5 tanesi zstd ile sıkıştırılmış ve bu tarayıcı zstd açamıyor/)
+    assert.equal(await old.locator('canvas').count(), 0, 'nothing to play')
+    if (shotsDir) await old.screenshot({ path: path.join(shotsDir, '23-replay-zstd-light.png') })
+    // the gzip session still plays there, through the UI's own gunzip (no Content-Encoding)
+    await old.goto(`${base}/p/${pid}/replay/${REPLAY_SESSION}`)
+    await old.locator('canvas.replay-canvas').waitFor()
+  } finally {
+    mock.hooks.rawReplay = false
+    await old.close()
   }
+
   // a session without any chunks
   await go(`/p/${pid}/replay/${'0'.repeat(32)}`)
   await page.getByText('Bu oturum için kayıt bulunamadı').waitFor()
@@ -683,8 +721,14 @@ await step('members: add a viewer; audit log lists what happened', async () => {
     assert.ok(actions.includes(a), `audit log is missing ${a}`)
   assert.ok(actions.indexOf('member.add') < actions.indexOf('project.create'), 'newest first')
   await shot('27-audit')
-  await page.getByRole('button', { name: 'Daha eski kayıtlar' }).click()
-  await page.waitForFunction((n) => document.querySelectorAll('tbody tr').length > n, actions.length)
+  // fewer than one page so far: no "older" button; the paging contract itself is checked against the API
+  assert.ok(actions.length < 50)
+  assert.equal(await page.getByRole('button', { name: 'Daha eski kayıtlar' }).count(), 0)
+  const orgId = mock.db.orgs[0].id
+  const firstPage = await (await page.request.get(`${base}/api/orgs/${orgId}/audit?limit=5`)).json()
+  const nextPage = await (await page.request.get(`${base}/api/orgs/${orgId}/audit?limit=5&before=${firstPage[4].id}`)).json()
+  assert.equal(firstPage.length, 5)
+  assert.ok(nextPage[0].id < firstPage[4].id && nextPage[0].ts <= firstPage[4].ts, 'before= continues where the page ended')
 })
 
 await step('account: change password; enable TOTP; login then asks for the code', async () => {
@@ -861,7 +905,8 @@ await step('keyboard: forms are reachable and operable without a mouse', async (
   await page.getByRole('dialog').waitFor()
   for (let i = 0; i < 8; i++) {
     await page.keyboard.press('Tab')
-    assert.ok(await page.evaluate(() => !!document.activeElement?.closest('dialog')), 'focus stays inside the dialog')
+    // a modal <dialog> makes the page behind it inert: focus is in the dialog, or momentarily on the browser chrome (body)
+    assert.ok(await page.evaluate(() => document.activeElement == document.body || !!document.activeElement?.closest('dialog')), 'focus never reaches the page behind the dialog')
   }
   await page.keyboard.press('Escape')
   assert.equal(await page.getByRole('dialog').count(), 0)

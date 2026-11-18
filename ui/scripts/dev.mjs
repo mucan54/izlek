@@ -1,4 +1,5 @@
-// Dev loop: esbuild in watch mode + the mock control plane with demo data.
+// Dev loop: esbuild in watch mode + the mock control plane with demo data
+// (or, with LA_CONTROL_URL set, a proxy to a real control plane).
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'

@@ -1879,3 +1879,35 @@ legend {
   margin-top: var(--sp-2);
   white-space: nowrap;
 }
+
+/* Slots 5–8 are also dashed in line charts, so two similar hues never rely on colour alone. */
+.chart .s5 .line,
+.chart .s6 .line,
+.chart .s7 .line,
+.chart .s8 .line {
+  stroke-dasharray: 7 4;
+}
+.swatch-line.s5,
+.swatch-line.s6,
+.swatch-line.s7,
+.swatch-line.s8 {
+  background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 8px);
+  width: 21px;
+}
+.weights-total.field-error {
+  color: var(--danger);
+}
+@media (prefers-color-scheme: dark) {
+  .weights-total.field-error {
+    color: #f08a82;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  .toast {
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: #262c33;
+  }
+  .toast-error {
+    background: #931b15;
+  }
+}

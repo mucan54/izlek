@@ -273,12 +273,14 @@ export const DashboardPage = ({ id }: { id: string }) => {
                   </button>
                   <Select
                     aria-label={S.dashboards.width}
+                    disabled={save.busy}
                     value={String(WIDTHS.includes(it.w as 4) ? it.w : 6) as '4'}
                     onChange={(w) => void save.run(resizeItem(items, i, { w: Number(w) }), name)}
                     options={WIDTHS.map((w) => [String(w) as '4', S.dashboards.widths[w]] as const)}
                   />
                   <Select
                     aria-label={S.dashboards.height}
+                    disabled={save.busy}
                     value={String(HEIGHTS.includes(it.h as 2) ? it.h : 3) as '2'}
                     onChange={(h) => void save.run(resizeItem(items, i, { h: Number(h) }), name)}
                     options={HEIGHTS.map((h) => [String(h) as '2', S.dashboards.heights[h]] as const)}

@@ -1,11 +1,12 @@
 // Org-level screens: members and the audit log.
+import { Fragment } from 'preact'
 import { useState } from 'preact/hooks'
 import { S } from '../i18n'
 import { asList } from '../lib/api'
 import { fmtDate, fmtDateTime } from '../lib/format'
 import { useAction, useAsync } from '../lib/hooks'
 import { ROLES, can } from '../lib/roles'
-import { useApp } from '../lib/session'
+import { useActorName, useApp } from '../lib/session'
 import type { AuditEntry, Member, OrgRef, Role } from '../lib/types'
 import { AsyncView, Button, Card, ConfirmButton, Empty, ErrorNote, Field, Input, Modal, PageHead, Select, toast } from '../components/ui'
 
@@ -96,10 +97,10 @@ export const Members = ({ org }: { org: OrgRef }) => {
       <Card title={S.members.rolesTitle}>
         <dl class="kv kv-wide">
           {ROLES.map((r) => (
-            <>
+            <Fragment key={r}>
               <dt>{S.roles[r]}</dt>
               <dd>{S.members.roleHelp[r]}</dd>
-            </>
+            </Fragment>
           ))}
         </dl>
       </Card>
@@ -141,6 +142,7 @@ const PAGE = 50
 
 export const Audit = ({ org }: { org: OrgRef }) => {
   const app = useApp()
+  const actorName = useActorName(org.id)
   const base = `/api/orgs/${encodeURIComponent(String(org.id))}/audit`
   const [extra, setExtra] = useState<AuditEntry[]>([])
   const [end, setEnd] = useState(false)
@@ -184,7 +186,7 @@ export const Audit = ({ org }: { org: OrgRef }) => {
                   {[...rows, ...extra].map((a) => (
                     <tr key={a.id}>
                       <td class="nowrap">{fmtDateTime(a.ts)}</td>
-                      <td>{String(a.actor)}</td>
+                      <td>{actorName(a.actor)}</td>
                       <td>
                         <code>{a.action}</code>
                       </td>

@@ -5,8 +5,13 @@
 //   node mock/server.mjs            # empty database → first-run setup
 //   MOCK_SEED=1 node mock/server.mjs  # demo org, project, flags, insights
 //
-// Environment: PORT (default 8090), MOCK_SEED, LA_UI_DIR (default ../dist).
-import { createServer } from 'node:http'
+//   LA_CONTROL_URL=http://127.0.0.1:8090 node mock/server.mjs
+//                                   # no mock data: serve dist/ and forward /api/ to a real control plane
+//
+// Environment: PORT (default 8090; 8089 in proxy mode), HOST, MOCK_SEED,
+// LA_UI_DIR (default ../dist), LA_CONTROL_URL.
+import { createServer, request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 import { createHash, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
@@ -56,6 +61,8 @@ export const createMockServer = (options = {}) => {
   const uiDir = options.uiDir ?? process.env.LA_UI_DIR ?? path.join(here, '../dist')
   const dataset = buildDataset(now())
   const engine = createEngine(dataset, now)
+  /** Switches tests can flip at runtime. */
+  const hooks = { rawReplay: false }
 
   const db = {
     users: [], // { id, email, password, totp_secret, totp_pending, totp_enabled }
@@ -620,8 +627,9 @@ export const createMockServer = (options = {}) => {
     // The query service sets Content-Encoding (spec/query.md §8), so browsers
     // decode transparently. Odd chunks are served without the header, as some
     // intermediaries would, to keep the UI's own gzip path exercised.
-    const headers = { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'private, max-age=3600' }
-    if (chunk.encoding == 'zstd' || chunk.seq % 2 == 0) headers['Content-Encoding'] = chunk.encoding
+    // `hooks.rawReplay` (tests) drops it everywhere, zstd included.
+    const headers = { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store' }
+    if (!hooks.rawReplay && (chunk.encoding == 'zstd' || chunk.seq % 2 == 0)) headers['Content-Encoding'] = chunk.encoding
     ctx.res.writeHead(200, { ...SECURITY_HEADERS, ...headers })
     ctx.res.end(chunk.body)
     return undefined
@@ -712,13 +720,31 @@ export const createMockServer = (options = {}) => {
     res.end(req.method == 'HEAD' ? undefined : body)
   }
 
+  /** Proxy mode: /api/ goes to a real control plane, untouched in both directions. */
+  const upstream = options.controlUrl ? new URL(options.controlUrl) : null
+  const forward = (req, res) => {
+    const send = upstream.protocol == 'https:' ? httpsRequest : httpRequest
+    const out = send(
+      { protocol: upstream.protocol, hostname: upstream.hostname, port: upstream.port, method: req.method, path: req.url, headers: { ...req.headers, host: upstream.host } },
+      (up) => {
+        res.writeHead(up.statusCode ?? 502, up.headers)
+        up.pipe(res)
+      },
+    )
+    out.on('error', (e) => {
+      if (res.headersSent) return res.destroy()
+      sendJson(res, 502, { error: { code: 'bad_gateway', message: `Control plane'e ulaşılamıyor (${upstream.origin}): ${e.message}` } })
+    })
+    req.pipe(out)
+  }
+
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost')
+    if (url.pathname.startsWith('/api/')) return upstream ? forward(req, res) : void handleApi(req, res, url)
     if (url.pathname == '/healthz' || url.pathname == '/readyz') {
       res.writeHead(200, { 'Content-Type': 'text/plain' })
       return res.end('ok\n')
     }
-    if (url.pathname.startsWith('/api/')) return void handleApi(req, res, url)
     void handleStatic(req, res, url)
   })
 
@@ -775,6 +801,8 @@ export const createMockServer = (options = {}) => {
       interval: 'week',
       series: [{ event: 'purchase', agg: 'sum', prop: 'props.amount', label: 'Ciro (₺)' }],
       breakdown: 'platform',
+      breakdown_limit: 10,
+      ui: { chart: 'bar' },
     })
     insight('En sık event\'ler', 'sql', { range: '7d', sql: 'SELECT event, count(*) FROM events GROUP BY 1 ORDER BY 2 DESC LIMIT 10' })
     db.dashboards.push({
@@ -797,6 +825,7 @@ export const createMockServer = (options = {}) => {
     server,
     db,
     dataset,
+    hooks,
     listen: (port = 0, host = '127.0.0.1') =>
       new Promise((resolve) => server.listen(port, host, () => resolve(server.address().port))),
     close: () => new Promise((resolve) => server.close(resolve)),
@@ -804,9 +833,13 @@ export const createMockServer = (options = {}) => {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) == fileURLToPath(import.meta.url)) {
-  const mock = createMockServer({ seed: !!process.env.MOCK_SEED && process.env.MOCK_SEED != '0' })
-  const port = await mock.listen(Number(process.env.PORT ?? 8090), process.env.HOST ?? '127.0.0.1')
-  console.log(`İzlek mock control plane: http://localhost:${port}`)
-  if (mock.db.users.length) console.log('Demo girişi: demo@izlek.local / izlek-demo-123 (izleyici: izleyici@izlek.local)')
-  else console.log('Veritabanı boş: ilk açılışta kurulum ekranı gelir.')
+  const controlUrl = process.env.LA_CONTROL_URL
+  const mock = createMockServer({ seed: !controlUrl && !!process.env.MOCK_SEED && process.env.MOCK_SEED != '0', controlUrl })
+  const port = await mock.listen(Number(process.env.PORT ?? (controlUrl ? 8089 : 8090)), process.env.HOST ?? '127.0.0.1')
+  if (controlUrl) console.log(`İzlek UI: http://localhost:${port}  (/api/ → ${controlUrl})`)
+  else {
+    console.log(`İzlek mock control plane: http://localhost:${port}`)
+    if (mock.db.users.length) console.log('Demo girişi: demo@izlek.local / izlek-demo-123 (izleyici: izleyici@izlek.local)')
+    else console.log('Veritabanı boş: ilk açılışta kurulum ekranı gelir.')
+  }
 }

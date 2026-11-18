@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { gzipSync } from 'node:zlib'
+import { gzipSync, zstdCompressSync } from 'node:zlib'
 import { demoRecording, encodeChunk } from '../../mock/lar1.mjs'
 import { ReplayLoadError, inflate, isZstd, loadChunk, sniff, type ChunkRef } from '../../src/replay/fetch'
 import { ReplayDecodeError, decodeChunk, type Chunk } from '../../src/replay/lar1'
@@ -92,10 +92,35 @@ test('sniffing and inflating chunk bodies', async () => {
   await assert.rejects(inflate(gz.slice(0, 20)), (e: unknown) => e instanceof ReplayLoadError && e.code == 'bad_chunk')
 })
 
-test('zstd bodies either decode or fail with a clear, typed error', async () => {
-  // not a real zstd frame beyond the magic: decoding must fail as zstd_unsupported, never as a crash
+test('zstd bodies: decoded where the runtime can, a typed error where it cannot', async () => {
+  const raw = fromHex(v.valid[0].hex)
+  const Native = globalThis.DecompressionStream
+  let supported = true
+  try {
+    new Native('zstd' as CompressionFormat)
+  } catch {
+    supported = false
+  }
+  if (supported && typeof zstdCompressSync == 'function') assert.deepEqual(await inflate(zstdCompressSync(raw)), raw)
+  // garbage after the magic is a broken chunk where zstd is supported, "unsupported" where it is not
   const fake = new Uint8Array([0x28, 0xb5, 0x2f, 0xfd, 1, 2, 3, 4])
-  await assert.rejects(inflate(fake, 7), (e: unknown) => e instanceof ReplayLoadError && e.code == 'zstd_unsupported' && e.seq == 7)
+  await assert.rejects(inflate(fake, 7), (e: unknown) => e instanceof ReplayLoadError && e.code == (supported ? 'bad_chunk' : 'zstd_unsupported') && e.seq == 7)
+
+  // a browser without zstd in DecompressionStream
+  class NoZstd extends Native {
+    constructor(format: CompressionFormat) {
+      if ((format as string) == 'zstd') throw new TypeError('Unsupported compression format')
+      super(format)
+    }
+  }
+  globalThis.DecompressionStream = NoZstd
+  try {
+    await assert.rejects(inflate(fake, 7), (e: unknown) => e instanceof ReplayLoadError && e.code == 'zstd_unsupported' && e.seq == 7)
+    assert.deepEqual(await inflate(gzipSync(raw)), raw, 'gzip is unaffected')
+  } finally {
+    globalThis.DecompressionStream = Native
+  }
+
   assert.equal(isZstd(1, 'x.bin.gz'), true)
   assert.equal(isZstd('zstd', 'x'), true)
   assert.equal(isZstd(2, 'x.bin.zst'), false)
