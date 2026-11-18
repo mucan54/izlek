@@ -159,6 +159,7 @@ func TestPostHogFlagsEndpoints(t *testing.T) {
 	for _, c := range []struct{ method, path string }{
 		{"POST", "/decide"}, {"POST", "/decide/?v=3&ip=1"}, {"GET", "/decide/"}, {"POST", "/flags"},
 		{"POST", "/flags/?v=2&config=true"}, {"GET", "/flags?anything=goes"}, {"PUT", "/flags/"}, {"DELETE", "/decide"},
+		{"GET", "/array/pk_test/config"}, {"GET", "/array/anything-at-all/config?ip=0"},
 	} {
 		resp := h.do(c.method, c.path, []byte(`data=eyJ0b2tlbiI6ICJ3aGF0ZXZlciJ9`), "Origin", "https://any.example")
 		body := readAll(t, resp)
@@ -173,6 +174,13 @@ func TestPostHogFlagsEndpoints(t *testing.T) {
 			t.Errorf("%s %s: no CORS header", c.method, c.path)
 		}
 	}
+	for _, c := range []struct{ method, path string }{
+		{"POST", "/array/pk_test/config"}, {"GET", "/array/pk_test/config.js"}, {"GET", "/array//config"}, {"GET", "/array/pk_test/config/x"}, {"GET", "/array/pk_test"},
+	} {
+		if got := h.status(c.method, c.path, nil); got != 404 {
+			t.Errorf("%s %s: %d, want 404", c.method, c.path, got)
+		}
+	}
 	if n := len(h.shipped()); n != 0 {
 		t.Fatalf("flags endpoints wrote %d WAL entries", n)
 	}
@@ -181,6 +189,9 @@ func TestPostHogFlagsEndpoints(t *testing.T) {
 func TestPostHogCompatDisabled(t *testing.T) {
 	h := newHarness(t, testTokens, func(c *Config) { c.CompatPostHog = false })
 	body := []byte(`{"api_key":"pk_test","batch":[{"event":"e","distinct_id":"d"}]}`)
+	if got := h.status("GET", "/array/pk_test/config", nil); got != 404 {
+		t.Errorf("/array/<token>/config with LA_COMPAT_POSTHOG=false: %d", got)
+	}
 	for _, p := range []string{"/batch", "/batch/", "/i/v0/e", "/i/v0/e/", "/e", "/e/", "/capture", "/capture/", "/decide", "/decide/", "/flags", "/flags/"} {
 		if got := h.status("POST", p, body); got != 404 {
 			t.Errorf("%s with LA_COMPAT_POSTHOG=false: %d", p, got)
@@ -294,10 +305,12 @@ func FuzzScanPostHog(f *testing.F) {
 			return
 		}
 		ok, events, token := refScan(doc)
-		// encoding/json replaces invalid UTF-8 inside strings; compare modulo that.
+		// encoding/json replaces every invalid UTF-8 byte inside a string
+		// with U+FFFD; the scanner returns the raw bytes (such a token can
+		// never match a registry entry). Compare modulo that.
 		gotToken := got.token
 		if !utf8.ValidString(gotToken) {
-			gotToken = strings.ToValidUTF8(gotToken, "�")
+			gotToken = string([]rune(gotToken))
 		}
 		if got.ok != ok || got.events != events || gotToken != token {
 			t.Fatalf("scanPostHog(%q) = {ok:%v events:%d token:%q}, reference {ok:%v events:%d token:%q}",

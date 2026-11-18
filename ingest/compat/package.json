@@ -5,6 +5,7 @@
   "license": "UNLICENSED",
   "dependencies": {
     "posthog-js": "1.451.1",
-    "posthog-node": "6.0.4"
+    "posthog-node": "5.74.0",
+    "posthog-node-v6": "npm:posthog-node@6.0.4"
   }
 }

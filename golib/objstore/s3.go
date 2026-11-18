@@ -270,17 +270,18 @@ func (s *S3Store) PutStream(ctx context.Context, key string, r io.Reader, size i
 		return Object{Key: key, Size: size, ETag: resp.Header.Get("ETag")}, nil
 	}
 
-	// Unknown length: buffer one part; a stream that fits is a plain signed
-	// PUT, a longer one becomes a multipart upload.
-	buf := make([]byte, multipartPartSize)
-	n, err := io.ReadFull(r, buf)
-	if err == io.EOF || err == io.ErrUnexpectedEOF {
-		return s.putBytes(ctx, key, buf[:n], false)
+	// Unknown length: buffer up to one part (growing as data arrives, so a
+	// small stream costs a small buffer). A stream that fits is a plain
+	// signed PUT; a longer one becomes a multipart upload.
+	var first bytes.Buffer
+	_, err := io.CopyN(&first, r, multipartPartSize)
+	if err == io.EOF {
+		return s.putBytes(ctx, key, first.Bytes(), false)
 	}
 	if err != nil {
 		return Object{}, fmt.Errorf("objstore: s3 put %s: %w", key, err)
 	}
-	return s.putMultipart(ctx, key, buf, r)
+	return s.putMultipart(ctx, key, first.Bytes(), r)
 }
 
 func (s *S3Store) putMultipart(ctx context.Context, key string, first []byte, rest io.Reader) (obj Object, err error) {
@@ -336,7 +337,7 @@ func (s *S3Store) putMultipart(ctx context.Context, key string, first []byte, re
 		parts = append(parts, part{PartNumber: num, ETag: presp.Header.Get("ETag")})
 		total += int64(len(buf))
 
-		buf = buf[:cap(buf)]
+		buf = buf[:multipartPartSize]
 		n, rerr := io.ReadFull(rest, buf)
 		buf = buf[:n]
 		if rerr == io.EOF {

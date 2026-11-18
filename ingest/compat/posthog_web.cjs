@@ -26,7 +26,13 @@ async function main() {
     page.on('requestfailed', (r) => problems.push(`requestfailed: ${r.method()} ${r.url()} ${r.failure() && r.failure().errorText}`))
     page.on('response', (r) => {
       const u = new URL(r.url())
-      responses.push({ method: r.request().method(), path: u.pathname, query: u.search, status: r.status() })
+      const h = r.request().headers()
+      const body = r.request().postDataBuffer()
+      responses.push({
+        method: r.request().method(), path: u.pathname, query: u.search, status: r.status(),
+        contentType: h['content-type'] || '', contentEncoding: h['content-encoding'] || '',
+        bodyHead: body ? body.subarray(0, 4).toString('hex') : '',
+      })
     })
 
     await page.goto(pageURL, { waitUntil: 'load' })

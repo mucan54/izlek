@@ -22,6 +22,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	mrand "math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -94,7 +95,7 @@ func main() {
 		},
 	}
 	g := &generator{client: client, url: strings.TrimRight(*target, "/") + "/v1/e", token: *token, events: *events, gzip: *useGzip}
-	tmpl, _ := g.template()
+	tmpl, _, _ := g.template()
 	fmt.Printf("target %s, %d events/batch, batch body %d bytes (%d bytes/event), gzip=%v\n",
 		g.url, *events, len(tmpl), len(tmpl) / *events, *useGzip)
 
@@ -124,9 +125,11 @@ type generator struct {
 	seq    atomic.Uint64
 }
 
-// template builds one realistic batch and returns it with the offset of the
-// 16-byte batch_id, which each request overwrites to stay unique.
-func (g *generator) template() ([]byte, int) {
+// template builds one realistic batch. It returns the body, the offset of
+// the 16-byte batch_id and the offsets of every record uuid; each request
+// overwrites those (as real batches differ in exactly these high-entropy
+// fields), which also keeps the WAL from compressing unrealistically well.
+func (g *generator) template() (body []byte, idOff int, uuidOffs []int) {
 	b := &wire.Batch{
 		SentAt: uint64(time.Now().UnixMilli()),
 		SDK:    "loadgen/0.1.0",
@@ -140,10 +143,12 @@ func (g *generator) template() ([]byte, int) {
 			{Key: "timezone", Tag: wire.TagString, Str: "Europe/Istanbul"},
 		},
 	}
+	body = wire.AppendHeader(nil, b)
+	_, n := binary.Uvarint(body[wire.MagicLen:])
+	idOff = wire.MagicLen + n
 	names := []string{"screen", "button_tapped", "item_viewed", "add_to_cart", "checkout_started", "purchase_completed"}
 	for i := 0; i < g.events; i++ {
 		r := wire.Record{Kind: wire.KindEvent, TS: b.SentAt - uint64(g.events-i)*250, Name: names[i%len(names)]}
-		rand.Read(r.UUID[:])
 		r.Props = []wire.Prop{
 			{Key: "screen", Tag: wire.TagString, Str: "ProductDetail"},
 			{Key: "item_id", Tag: wire.TagString, Str: "sku-" + strconv.Itoa(100000+i*7919%900000)},
@@ -152,11 +157,12 @@ func (g *generator) template() ([]byte, int) {
 			{Key: "logged_in", Tag: wire.TagTrue},
 			{Key: "experiment", Tag: wire.TagString, Str: "new_checkout:b"},
 		}
-		b.Records = append(b.Records, r)
+		start := len(body)
+		body = wire.AppendRecord(body, &r)
+		_, ln := binary.Uvarint(body[start:])
+		uuidOffs = append(uuidOffs, start+ln+1) // after varint(len) and kind
 	}
-	body := wire.AppendBatch(nil, b)
-	_, n := binary.Uvarint(body[wire.MagicLen:])
-	return body, wire.MagicLen + n
+	return body, idOff, uuidOffs
 }
 
 func (g *generator) run(conns int, d time.Duration) stepResult {
@@ -169,9 +175,10 @@ func (g *generator) run(conns int, d time.Duration) stepResult {
 		wg.Add(1)
 		go func(w int) {
 			defer wg.Done()
-			body, idOff := g.template()
+			body, idOff, uuidOffs := g.template()
 			var prefix [8]byte
 			rand.Read(prefix[:])
+			rng := mrand.New(mrand.NewPCG(binary.LittleEndian.Uint64(prefix[:]), uint64(w)))
 			var gzBuf bytes.Buffer
 			gzw := gzip.NewWriter(&gzBuf)
 			lat := make([]time.Duration, 0, 4096)
@@ -182,6 +189,10 @@ func (g *generator) run(conns int, d time.Duration) stepResult {
 				// Unique batch_id: 8 random bytes per worker + a global counter.
 				copy(body[idOff:], prefix[:])
 				binary.BigEndian.PutUint64(body[idOff+8:], g.seq.Add(1))
+				for _, off := range uuidOffs {
+					binary.LittleEndian.PutUint64(body[off:], rng.Uint64())
+					binary.LittleEndian.PutUint64(body[off+8:], rng.Uint64())
+				}
 				payload := body
 				if g.gzip {
 					gzBuf.Reset()

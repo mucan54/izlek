@@ -314,6 +314,14 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 				s.serve(w, r, metrics.FormatFlags, s.handleFlags)
 				return
 			}
+			// posthog-js fetches /array/<token>/config on every init before it
+			// falls back to /flags; answer it with the same empty config.
+			if rest, ok := strings.CutPrefix(p, "/array/"); ok && r.Method == http.MethodGet {
+				if tok, tail, _ := strings.Cut(rest, "/"); tok != "" && tail == "config" {
+					s.serve(w, r, metrics.FormatFlags, s.handleFlags)
+					return
+				}
+			}
 		}
 		s.serve(w, r, metrics.FormatOther, notFound)
 	}
@@ -374,6 +382,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, format int, h fun
 		if allowed {
 			hdr.Set("Access-Control-Allow-Origin", rc.origin)
 			hdr.Set("Access-Control-Allow-Credentials", "true")
+			// Lets browser SDKs read the retry hint on 429/503.
+			hdr.Set("Access-Control-Expose-Headers", "Retry-After")
 		}
 	}
 	if rep.retryAfter > 0 {

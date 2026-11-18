@@ -24,8 +24,32 @@ type backend struct {
 	open func(t *testing.T) objstore.Store
 }
 
+// realS3 adds a backend for a real S3 implementation when LA_TEST_S3_ENDPOINT
+// is set (e.g. a local MinIO, which verifies SigV4 signatures; devs3 does
+// not):
+//
+//	LA_TEST_S3_ENDPOINT=http://127.0.0.1:19000 LA_TEST_S3_ACCESS_KEY=... LA_TEST_S3_SECRET_KEY=... go test ./golib/objstore/
+func realS3() []backend {
+	endpoint := os.Getenv("LA_TEST_S3_ENDPOINT")
+	if endpoint == "" {
+		return nil
+	}
+	return []backend{{"s3-real", func(t *testing.T) objstore.Store {
+		bucket := fmt.Sprintf("la-test-%d", time.Now().UnixNano())
+		st, err := objstore.Open("s3://"+bucket+"/pre fix/x=1", objstore.S3Config{Endpoint: endpoint, Region: os.Getenv("LA_TEST_S3_REGION"),
+			AccessKey: os.Getenv("LA_TEST_S3_ACCESS_KEY"), SecretKey: os.Getenv("LA_TEST_S3_SECRET_KEY")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.(*objstore.S3Store).CreateBucketForTest(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}}}
+}
+
 func backends() []backend {
-	return []backend{
+	return append(realS3(), []backend{
 		{"file", func(t *testing.T) objstore.Store {
 			st, err := objstore.Open("file://"+t.TempDir(), objstore.S3Config{})
 			if err != nil {
@@ -54,7 +78,7 @@ func backends() []backend {
 			}
 			return st
 		}},
-	}
+	}...)
 }
 
 // TestContract runs the same behavioural contract against every backend.
@@ -226,7 +250,8 @@ func TestContract(t *testing.T) {
 // TestPutIfAbsentRace: exactly one of many concurrent creators wins, on every
 // backend (file: link(2); s3: If-None-Match: *).
 func TestPutIfAbsentRace(t *testing.T) {
-	for _, b := range backends()[:2] {
+	all := backends()
+	for _, b := range all[:len(all)-1] { // every backend once (the last is a second devs3 flavour)
 		t.Run(b.name, func(t *testing.T) {
 			st := b.open(t)
 			ctx := context.Background()

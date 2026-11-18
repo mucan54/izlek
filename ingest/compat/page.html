@@ -10,8 +10,12 @@
   <button id="btn">a button</button>
   <script>
     // __INGEST_URL__ and __TOKEN__ are substituted by the test server.
+    // opt_out_useragent_filter: posthog-js drops every event when the user
+    // agent looks automated (headless Chromium does); the SDK's own warning
+    // recommends this switch for end-to-end tests. Everything else is default.
     window.posthog.init('__TOKEN__', {
       api_host: '__INGEST_URL__',
+      opt_out_useragent_filter: true,
       loaded: function () { window.__ph_loaded = true },
     })
   </script>

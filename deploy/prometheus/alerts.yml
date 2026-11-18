@@ -10,7 +10,7 @@ groups:
           summary: "Ingestion segmentleri object storage'a yüklenemiyor ({{ $labels.instance }})"
           runbook: docs/runbooks/object-storage-outage.md
       - alert: WalDiskHalfFull
-        expr: la_ingest_wal_local_bytes / la_ingest_wal_max_local_bytes > 0.5
+        expr: la_ingest_wal_local_bytes / la_ingest_wal_local_limit_bytes > 0.5
         for: 2m
         labels: { severity: page }
         annotations:

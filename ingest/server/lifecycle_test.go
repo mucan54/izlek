@@ -83,20 +83,28 @@ func TestTokenReloadAndLastGood(t *testing.T) {
 
 	// A broken file and then a store outage: the last good set keeps working.
 	put(`{"version":4,"tokens":`)
-	time.Sleep(60 * time.Millisecond)
+	for deadline := time.Now().Add(5 * time.Second); h.metric("la_ingest_tokens_refresh_failures") < 1; {
+		if time.Now().After(deadline) {
+			t.Fatal("the broken tokens file was never reported as a refresh failure")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if got := h.status("POST", "/v1/e", mkBatch(50, 1), "Authorization", "Bearer pk_new"); got != 200 {
 		t.Fatalf("after broken tokens file: %d", got)
 	}
 	put(`{"version":5,"tokens":{"pk_new":{"project_id":7,"status":"active"},"pk_v5":{"project_id":8,"status":"active"}}}`)
 	waitStatus("v5", "pk_v5", 200)
 	h.waitShipped()
+	before := h.metric("la_ingest_tokens_refresh_failures")
 	h.s3.SetFault(devs3.FaultFail)
-	time.Sleep(60 * time.Millisecond)
+	for deadline := time.Now().Add(5 * time.Second); h.metric("la_ingest_tokens_refresh_failures") < before+2; {
+		if time.Now().After(deadline) {
+			t.Fatalf("refresh failures during the outage not counted: %v", h.metric("la_ingest_tokens_refresh_failures"))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if got := h.status("POST", "/v1/e", mkBatch(51, 1), "Authorization", "Bearer pk_v5"); got != 200 {
 		t.Fatalf("during store outage: %d", got)
-	}
-	if h.metric("la_ingest_tokens_refresh_failures") < 2 {
-		t.Fatalf("refresh failures not counted: %v", h.metric("la_ingest_tokens_refresh_failures"))
 	}
 
 	// Restart during the outage: the node comes up from the disk copy.
@@ -513,7 +521,7 @@ func TestReplayStoreOutage(t *testing.T) {
 // seal -> upload -> exit.
 func TestGracefulShutdown(t *testing.T) {
 	h := newHarness(t, testTokens, func(c *Config) {
-		c.DrainDelay = 300 * time.Millisecond
+		c.DrainDelay = 800 * time.Millisecond
 		c.SegmentAge = time.Hour // nothing is shipped before shutdown seals it
 	})
 	h.ts.Close() // use a real listener driven by Server.Serve instead
@@ -579,7 +587,7 @@ func TestGracefulShutdown(t *testing.T) {
 	select {
 	case err := <-shutdownDone:
 		t.Fatalf("shutdown returned while a request was still open: %v", err)
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(1200 * time.Millisecond): // well past the drain delay
 	}
 	pw.Write(slow[10:])
 	pw.Close()
@@ -589,7 +597,7 @@ func TestGracefulShutdown(t *testing.T) {
 	if err := <-shutdownDone; err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
-	if time.Since(start) < 300*time.Millisecond {
+	if time.Since(start) < 800*time.Millisecond {
 		t.Fatal("shutdown did not wait for the drain delay")
 	}
 	if err := <-served; err != nil {

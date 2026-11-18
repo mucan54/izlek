@@ -302,6 +302,7 @@ func TestRateLimits(t *testing.T) {
 		h := newHarness(t, testTokens, nil)
 		codes := map[int]int{}
 		var retryAfter string
+		start := time.Now()
 		for i := 0; i < 12; i++ { // pk_slow: 5 req/s, burst 5
 			resp := h.do("POST", "/v1/e", mkBatch(uint32(100+i), 1), "Authorization", "Bearer pk_slow")
 			resp.Body.Close()
@@ -310,8 +311,10 @@ func TestRateLimits(t *testing.T) {
 				retryAfter = resp.Header.Get("Retry-After")
 			}
 		}
-		if codes[200] < 5 || codes[200] > 6 || codes[429] != 12-codes[200] {
-			t.Fatalf("status codes %v, want ~5x200 then 429", codes)
+		// Burst of 5, plus whatever refilled while the loop ran (slow CI).
+		maxOK := 5 + int(time.Since(start).Seconds()*5) + 1
+		if codes[200] < 5 || codes[200] > maxOK || codes[429] != 12-codes[200] || codes[429] == 0 {
+			t.Fatalf("status codes %v, want 5..%d x 200 and the rest 429", codes, maxOK)
 		}
 		if retryAfter != "1" {
 			t.Fatalf("Retry-After %q", retryAfter)
@@ -335,19 +338,17 @@ func TestRateLimits(t *testing.T) {
 	})
 	t.Run("per ip", func(t *testing.T) {
 		h := newHarness(t, testTokens, func(c *Config) {
-			c.RateIP = 3
+			c.RateIP = 1 // burst 1, one more per second: robust against a slow machine
 			c.TrustedProxies = 1
 		})
 		send := func(ip string, id uint32) int {
 			return h.status("POST", "/v1/e", mkBatch(id, 1), "Authorization", "Bearer pk_test", "X-Forwarded-For", ip)
 		}
-		for i := 0; i < 3; i++ {
-			if got := send("198.51.100.1", uint32(i)); got != 200 {
-				t.Fatalf("request %d: %d", i, got)
-			}
+		if got := send("198.51.100.1", 1); got != 200 {
+			t.Fatalf("first request: %d", got)
 		}
 		if got := send("198.51.100.1", 10); got != 429 {
-			t.Fatalf("4th request from one ip: %d", got)
+			t.Fatalf("second request from one ip within a second: %d", got)
 		}
 		if got := send("198.51.100.2", 11); got != 200 {
 			t.Fatalf("other ip: %d", got)

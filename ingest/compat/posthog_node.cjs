@@ -1,14 +1,15 @@
 // PostHog Node SDK against the ingestion compat adapter.
-// Usage: node posthog_node.cjs <ingest-base-url> <token>
+// Usage: node posthog_node.cjs <ingest-base-url> <token> [package]
+// package defaults to "posthog-node"; "posthog-node-v6" selects the 6.x line.
 // Prints one JSON line: { errors, queueLength, flag, flagEnabled, sent }.
 'use strict'
-const { PostHog } = require('posthog-node')
 
-const [host, token] = process.argv.slice(2)
+const [host, token, pkg = 'posthog-node'] = process.argv.slice(2)
 if (!host || !token) {
-  console.error('usage: posthog_node.cjs <host> <token>')
+  console.error('usage: posthog_node.cjs <host> <token> [package]')
   process.exit(2)
 }
+const { PostHog } = require(pkg)
 
 async function main() {
   const errors = []
@@ -22,8 +23,15 @@ async function main() {
   await client.flush()
 
   // /flags through the SDK: the adapter always answers "no flags".
-  const flag = await client.getFeatureFlag('some-flag', 'node-user-1')
-  const flagEnabled = await client.isFeatureEnabled('some-flag', 'node-user-1')
+  let flag, flagEnabled
+  if (typeof client.evaluateFlags === 'function') {
+    const flags = await client.evaluateFlags('node-user-1')
+    flag = flags.getFlag('some-flag')
+    flagEnabled = flags.isEnabled('some-flag')
+  } else {
+    flag = await client.getFeatureFlag('some-flag', 'node-user-1')
+    flagEnabled = await client.isFeatureEnabled('some-flag', 'node-user-1')
+  }
 
   // More than flushAt events, so the SDK batches and flushes on its own.
   let sent = 3
