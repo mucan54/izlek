@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Demo shop</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; font: 15px/1.45 system-ui, sans-serif; background: #f6f7fb; color: #1c2030; }
+      header { display: flex; align-items: center; gap: 24px; padding: 14px 28px; background: #1f2a5c; color: #ffffff; }
+      header .brand { font-weight: 700; font-size: 18px; }
+      header nav a { color: #cfd6ff; margin-right: 18px; text-decoration: none; }
+      header .cart { margin-left: auto; background: #ffb547; color: #1c2030; padding: 6px 14px; border-radius: 16px; }
+      main { max-width: 980px; margin: 0 auto; padding: 24px 28px 80px; }
+      h1 { margin: 6px 0 4px; font-size: 26px; }
+      .lead { color: #5a6072; margin: 0 0 20px; }
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+      .card { background: #ffffff; border: 1px solid #dfe3ee; border-radius: 10px; padding: 14px; }
+      .card .img { height: 110px; border-radius: 8px; background: #dfe6ff; margin-bottom: 10px; }
+      .card:nth-child(2) .img { background: #ffe3c2; }
+      .card:nth-child(3) .img { background: #d3f3df; }
+      .card h3 { margin: 0 0 4px; font-size: 16px; }
+      .card .price { color: #1f2a5c; font-weight: 700; margin-bottom: 10px; }
+      button { font: inherit; border: 0; border-radius: 8px; padding: 8px 14px; background: #3b5bfd; color: #ffffff; cursor: pointer; }
+      .panel { margin-top: 26px; background: #ffffff; border: 1px solid #dfe3ee; border-radius: 10px; padding: 18px; }
+      .panel h2 { margin: 0 0 10px; font-size: 18px; }
+      label { display: block; margin: 10px 0 4px; color: #5a6072; font-size: 13px; }
+      input { font: inherit; width: 320px; padding: 8px 10px; border: 1px solid #c8cede; border-radius: 8px; }
+      #pay { margin-top: 14px; background: #1aa35b; }
+      #banner { display: none; margin-top: 18px; padding: 12px 16px; border-radius: 8px; background: #e2f7ea; color: #14613a; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="brand">Demo shop</span>
+      <nav><a href="/">Home</a><a href="/products" id="nav-products">Products</a><a href="/help">Help</a></nav>
+      <span class="cart" id="cart">Cart (0)</span>
+    </header>
+    <main>
+      <h1 id="title">Autumn picks</h1>
+      <p class="lead" id="lead">Three things our customers keep coming back for.</p>
+      <div class="grid">
+        <div class="card"><div class="img"></div><h3>Canvas backpack</h3><div class="price">€ 59.00</div><button id="add-1" data-track="add_to_cart" data-track-sku="bag-01">Add to cart</button></div>
+        <div class="card"><div class="img"></div><h3>Ceramic mug</h3><div class="price">€ 14.50</div><button id="add-2" data-track="add_to_cart" data-track-sku="mug-07">Add to cart</button></div>
+        <div class="card"><div class="img"></div><h3>Desk plant</h3><div class="price">€ 22.00</div><button id="add-3" data-track="add_to_cart" data-track-sku="plant-3">Add to cart</button></div>
+      </div>
+      <div class="panel" id="checkout">
+        <h2>Checkout</h2>
+        <label for="email">Email</label>
+        <input id="email" type="text" placeholder="you@example.com" />
+        <label for="card">Card number</label>
+        <input id="card" type="password" placeholder="•••• •••• •••• ••••" />
+        <div><button id="pay">Pay now</button></div>
+        <div id="banner">Thanks! Your order is on its way.</div>
+      </div>
+    </main>
+    <script src="/sdk/izlek.min.js"></script>
+    <script src="/sdk/izlek-flags.min.js"></script>
+    <script src="/sdk/izlek-replay.min.js"></script>
+    <script>
+      const q = new URLSearchParams(location.search)
+      let items = 0
+      for (const b of document.querySelectorAll('[data-track=add_to_cart]'))
+        b.addEventListener('click', () => (document.getElementById('cart').textContent = `Cart (${++items})`))
+      document.getElementById('nav-products').addEventListener('click', (e) => {
+        e.preventDefault()
+        history.pushState({}, '', '/products')
+        document.getElementById('title').textContent = 'All products'
+        document.getElementById('lead').textContent = 'Everything in stock, sorted by what sells.'
+      })
+      document.getElementById('pay').addEventListener('click', () => {
+        document.getElementById('banner').style.display = 'block'
+        izlek.capture('purchase', { amount: 95.5, items })
+      })
+      izlek.init({ token: q.get('token'), host: q.get('host'), flushIntervalMs: 500 })
+      window.flagsReady = izlekFlags.initFlags()
+      izlekReplay.startReplay({ sampleRate: 1 })
+    </script>
+  </body>
+</html>

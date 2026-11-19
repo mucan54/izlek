@@ -32,6 +32,19 @@ node e2e/outage.mjs --seconds 600 --mode fail    # depo 503 döner
 node e2e/outage.mjs --seconds 600 --mode pause   # depo yanıt vermez
 ```
 
+Çok sayıda küçük proje ölçümü (istek sayıları, süre, bellek; sonuçlar `docs/status.md` §3):
+
+```sh
+node e2e/many-projects.mjs --projects 10000
+```
+
+Demo ve ekran görüntüleri: tüm hattı başlatır, bir aylık sentetik mağaza trafiği gönderir, Web SDK ile gerçek bir tarayıcı oturumu kaydeder, flag/insight/pano oluşturur. Ülkeler dahil tüm veri uydurmadır (`e2e/tools/geodb` sahte bir IP→ülke dosyası üretir).
+
+```sh
+node e2e/demo.mjs --serve                 # çalışır bırakır; UI adresini ve giriş bilgilerini yazar
+node e2e/demo.mjs --shots docs/images     # README'deki ekran görüntülerini yeniden üretir (--lang tr ile Türkçe)
+```
+
 ## Doğrulananlar
 
 | Adım | Neyi kanıtlar |
