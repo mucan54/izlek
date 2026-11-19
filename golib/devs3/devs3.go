@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -69,6 +70,13 @@ type Server struct {
 	faultMu  sync.Mutex
 	faultCh  chan struct{} // closed whenever the fault mode changes
 	requests atomic.Int64
+
+	statsMu sync.Mutex
+	stats   map[string]int64
+
+	// index holds each bucket's keys in sorted order, so that a LIST costs
+	// O(log n + matches) instead of a scan of the whole bucket.
+	index map[string][]string
 }
 
 // New returns an in-memory server.
@@ -111,6 +119,7 @@ func NewDir(dir string) (*Server, error) {
 		o := newObject(data, "")
 		o.mod = fi.ModTime().UTC()
 		s.bucket(bucket)[key] = o
+		s.indexAdd(bucket, key)
 		return nil
 	})
 	if err != nil {
@@ -126,6 +135,43 @@ func (s *Server) SetFault(f Fault) {
 	close(s.faultCh)
 	s.faultCh = make(chan struct{})
 	s.faultMu.Unlock()
+}
+
+// count classifies a request for /_devs3/stats: LIST is what an idle
+// control loop over many prefixes costs, so it is kept apart from GET.
+func (s *Server) count(r *http.Request) {
+	kind := r.Method
+	if r.Method == http.MethodGet && r.URL.Query().Has("list-type") {
+		kind = "LIST"
+	}
+	s.statsMu.Lock()
+	if s.stats == nil {
+		s.stats = map[string]int64{}
+	}
+	s.stats[kind]++
+	s.statsMu.Unlock()
+}
+
+// handleStats reports request counts per kind and the number of objects.
+func (s *Server) handleStats(w http.ResponseWriter) {
+	s.statsMu.Lock()
+	out := map[string]int64{}
+	for k, v := range s.stats {
+		out[k] = v
+	}
+	s.statsMu.Unlock()
+	s.mu.RLock()
+	var objects, bytes int64
+	for _, b := range s.buckets {
+		objects += int64(len(b))
+		for _, o := range b {
+			bytes += int64(len(o.data))
+		}
+	}
+	s.mu.RUnlock()
+	out["objects"], out["bytes"] = objects, bytes
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }
 
 // Requests returns the number of S3 requests received so far (including
@@ -147,6 +193,27 @@ func (s *Server) Keys(bucket string) []string {
 func newObject(data []byte, ctype string) *object {
 	sum := md5.Sum(data)
 	return &object{data: data, etag: `"` + hex.EncodeToString(sum[:]) + `"`, mod: time.Now().UTC(), ctyp: ctype}
+}
+
+// indexAdd inserts a key that is not in the bucket yet. Caller holds s.mu.
+func (s *Server) indexAdd(bucket, key string) {
+	if s.index == nil {
+		s.index = map[string][]string{}
+	}
+	keys := s.index[bucket]
+	i := sort.SearchStrings(keys, key)
+	keys = append(keys, "")
+	copy(keys[i+1:], keys[i:])
+	keys[i] = key
+	s.index[bucket] = keys
+}
+
+// indexDel removes a key that is in the bucket. Caller holds s.mu.
+func (s *Server) indexDel(bucket, key string) {
+	keys := s.index[bucket]
+	if i := sort.SearchStrings(keys, key); i < len(keys) && keys[i] == key {
+		s.index[bucket] = append(keys[:i], keys[i+1:]...)
+	}
 }
 
 // bucket returns (creating) the bucket map. Caller holds s.mu for writing.
@@ -186,7 +253,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleFaultControl(w, r)
 		return
 	}
+	if r.URL.Path == "/_devs3/stats" {
+		s.handleStats(w)
+		return
+	}
 	s.requests.Add(1)
+	s.count(r)
 	for {
 		s.faultMu.Lock()
 		mode, ch := Fault(s.fault.Load()), s.faultCh
@@ -365,6 +437,9 @@ func (s *Server) store(bucket, key string, obj *object, ifAbsent bool) (bool, er
 			return false, err
 		}
 	}
+	if _, exists := b[key]; !exists {
+		s.indexAdd(bucket, key)
+	}
 	b[key] = obj
 	return true, nil
 }
@@ -376,6 +451,9 @@ func (s *Server) remove(bucket, key string) error {
 		if err := os.Remove(filepath.Join(s.dir, bucket, filepath.FromSlash(key))); err != nil && !os.IsNotExist(err) {
 			return err
 		}
+	}
+	if _, exists := s.buckets[bucket][key]; exists {
+		s.indexDel(bucket, key)
 	}
 	delete(s.buckets[bucket], key)
 	return nil
@@ -540,13 +618,13 @@ func (s *Server) listObjects(w http.ResponseWriter, bucket string, q url.Values)
 
 	s.mu.RLock()
 	b := s.buckets[bucket]
-	keys := make([]string, 0, len(b))
-	for k := range b {
-		if strings.HasPrefix(k, prefix) {
-			keys = append(keys, k)
-		}
+	all := s.index[bucket]
+	lo := sort.SearchStrings(all, prefix)
+	hi := lo
+	for hi < len(all) && strings.HasPrefix(all[hi], prefix) {
+		hi++
 	}
-	sort.Strings(keys)
+	keys := all[lo:hi] // read-only view; s.mu is held until the response is built
 	last := ""
 	for _, k := range keys {
 		// A continuation resumes after the last returned item; for a common
