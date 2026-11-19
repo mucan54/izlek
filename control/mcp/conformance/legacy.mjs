@@ -94,6 +94,33 @@ const keyVersions = []
   })
   assert.deepEqual(trends.structuredContent.series[0].values, [3])
 
+  // Every remaining tool once. The client validates each structured result
+  // against the output schema the server declared for the tool, so a result
+  // that does not match its schema fails here.
+  const range = { from: '2026-11-01', to: '2026-11-18' }
+  const call = async (name, args = {}) => {
+    const res = await client.callTool({ name, arguments: args })
+    assert.equal(res.isError, false, `${name}: ${text(res)}`)
+    return res.structuredContent
+  }
+  assert.equal((await call('get_project')).project.name, 'Shop')
+  assert.equal((await call('update_project_settings', { replay_retention_days: 14 })).project.replay_retention_days, 14)
+  assert.equal((await call('list_write_tokens')).tokens[0].token, WRITE_TOKEN)
+  const extra = (await call('create_write_token', { name: 'android' })).token
+  assert.equal((await call('update_write_token', { token: extra.token, rate_limit: 25 })).token.rate_limit, 25)
+  const made = await call('create_secret_key', { name: 'conformance', scopes: ['query'] })
+  assert.match(made.secret, /^sk_/)
+  assert.ok((await call('list_secret_keys')).keys.some((k) => k.name == 'conformance' && k.last_used_at === null))
+  assert.equal((await call('list_flags')).flags.length, 1)
+  assert.equal((await call('get_flag', { key: 'conformance_key' })).flag.updated_by.startsWith('key:'), true)
+  assert.equal((await call('query_funnel', { ...range, steps: [{ event: 'signup' }, { event: 'purchase' }] })).steps[1].count, 31)
+  assert.equal((await call('query_retention', { ...range, period: 'week' })).cohorts[0].size, 42)
+  assert.equal((await call('query_events', { ...range, limit: 1 })).events[0].props.amount, 12.5)
+  assert.equal((await call('run_sql', { ...range, sql: 'SELECT event, platform, count(*) AS events, max(ts) AS last_ts FROM events GROUP BY 1, 2' })).rows.length, 2)
+  for (const platform of ['web', 'android', 'ios', 'jvm', 'posthog_js', 'posthog_node', 'http']) {
+    assert.equal((await call('get_sdk_setup', { platform })).platform, platform)
+  }
+
   // A tool that fails says so in a result the model can read…
   const bad = await client.callTool({ name: 'update_write_token', arguments: { token: WRITE_TOKEN, status: 'paused' } })
   assert.equal(bad.isError, true)
@@ -186,6 +213,9 @@ const oauthVersion = transport.protocolVersion
   assert.equal(projects.structuredContent.organisations[0].role, 'owner')
   const flag = await client.callTool({ name: 'create_flag', arguments: { project_id: PROJECT_ID, key: 'conformance_oauth' } })
   assert.equal(flag.isError, false, text(flag))
+  const second = await client.callTool({ name: 'create_project', arguments: { name: 'Second' } })
+  assert.equal(second.isError, false, text(second))
+  assert.match(second.structuredContent.write_token, /^pk_/)
 }
 
 // The access token expires; the client refreshes on the 401 and carries on.

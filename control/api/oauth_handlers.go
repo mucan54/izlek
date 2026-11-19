@@ -514,23 +514,26 @@ func (s *Server) oauthToken(w *statusWriter, r *http.Request, info *requestInfo)
 		oauthFail(w, http.StatusTooManyRequests, "temporarily_unavailable", "too many requests")
 		return
 	}
-	if blocked, wait := s.oauthTokenFailLimit.Blocked(ip); blocked {
-		w.Header().Set("Retry-After", retryAfter(wait))
-		oauthFail(w, http.StatusTooManyRequests, "temporarily_unavailable", "too many failed requests")
-		return
-	}
 	form, problem := readForm(w, r)
 	if problem != "" {
 		oauthFail(w, http.StatusBadRequest, "invalid_request", problem)
 		return
 	}
-	// deny answers a failed request; guesses at codes and tokens are
-	// counted against the address.
+	// deny answers a failed request. Guesses at codes and tokens are counted
+	// against the address, and an address over the limit is told to slow
+	// down. Requests that are valid are never refused on that account:
+	// assistants share addresses, and one of them misbehaving must not keep
+	// the others from refreshing their tokens.
 	deny := func(code, description string) {
+		s.mOAuth.With("token_" + code).Inc()
 		if code == "invalid_grant" || code == "invalid_client" {
+			if blocked, wait := s.oauthTokenFailLimit.Blocked(ip); blocked {
+				w.Header().Set("Retry-After", retryAfter(wait))
+				oauthFail(w, http.StatusTooManyRequests, "temporarily_unavailable", "too many failed requests")
+				return
+			}
 			s.oauthTokenFailLimit.Add(ip)
 		}
-		s.mOAuth.With("token_" + code).Inc()
 		oauthFail(w, http.StatusBadRequest, code, description)
 	}
 	clientID := form.Get("client_id")

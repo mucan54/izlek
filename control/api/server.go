@@ -412,7 +412,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case path == "/api" || strings.HasPrefix(path, "/api/"):
 		s.securityHeaders(sw.Header(), cspAPI)
 		s.serveAPI(sw, r, info)
-	case s.cfg.MCPEnabled && path == "/mcp":
+	case s.cfg.MCPEnabled && (path == "/mcp" || path == "/mcp/"):
 		s.securityHeaders(sw.Header(), cspAPI)
 		s.serveMCP(sw, r, info)
 	case s.cfg.MCPEnabled && strings.HasPrefix(path, "/.well-known/"):

@@ -24,6 +24,7 @@
 - [Session replay](#session-replay)
 - [Querying](#querying)
 - [Administration](#administration)
+- [AI assistants (MCP)](#ai-assistants-mcp)
 - [Privacy and data deletion](#privacy-and-data-deletion)
 - [Configuration](#configuration)
 - [Operations](#operations)
@@ -461,6 +462,39 @@ The control plane is not on the data path. While it is down, ingestion, flag eva
 
 ---
 
+## AI assistants (MCP)
+
+The control plane is also a remote [Model Context Protocol](https://modelcontextprotocol.io) server, so you can set up and operate izlek from an assistant such as **Claude** or **ChatGPT** instead of the web UI: "create a project for my shop and give me the snippet for a web page", "did the events arrive?", "roll out `new_checkout` to 20 % of iOS users", "what was last week's signup-to-purchase conversion by platform?".
+
+```sh
+# Claude Code, with a secret key (admin scope) of one project
+claude mcp add --transport http izlek https://analytics.example.com/mcp \
+  --header "Authorization: Bearer sk_…"
+
+# Claude Code, signing in as yourself in the browser (OAuth)
+claude mcp add --transport http izlek https://analytics.example.com/mcp
+```
+
+In **claude.ai / Claude Desktop** and **ChatGPT**, add a custom connector with the URL `https://analytics.example.com/mcp` and choose OAuth; you sign in to izlek and approve the request on a consent page (English or Turkish). Step-by-step instructions for each client: [`docs/mcp.md`](docs/mcp.md).
+
+| Group | Tools |
+|---|---|
+| Setup | `list_projects`, `create_project`, `get_project`, `update_project_settings`, `list_write_tokens`, `create_write_token`, `update_write_token`, `list_secret_keys`, `create_secret_key`, `get_sdk_setup`, `verify_installation` |
+| Feature flags | `list_flags`, `get_flag`, `create_flag`, `update_flag`, `evaluate_flag` |
+| Analytics | `query_trends`, `query_funnel`, `query_retention`, `query_events`, `run_sql`, `get_schema` |
+
+How it is built:
+
+- **Two ways to authenticate.** A secret key with the `admin` scope (project-scoped; for clients that can send a header, such as Claude Code), or OAuth 2.1 access tokens issued by the control plane itself, which act as the user who approved them with that user's roles. The built-in authorization server implements PKCE (S256), protected-resource and server metadata, Client ID Metadata Documents and dynamic client registration, the `resource` parameter with audience checks, rotating refresh tokens and revocation. Scopes are `izlek:read` and `izlek:admin`.
+- **Same rules as the web UI.** Tools run the existing API handlers in-process, so validation, role checks and the audit log are shared; mutating calls are recorded with the assistant that made them.
+- **Deliberately not exposed:** closing projects, deleting tokens, keys or flags, member management and deletion requests.
+- **Protocol revisions.** One stateless endpoint (`POST /mcp`, JSON responses) serves both the handshake-based revisions (2025-03-26 to 2025-11-25) and the handshake-free 2026-07-28 revision.
+- OAuth needs `LA_PUBLIC_URL` (the control plane's public `https://` origin); without it `/mcp` accepts secret keys only. Connected apps can be listed and revoked per user; changing your password revokes them all.
+
+CI runs conformance tests with the official MCP client libraries (both protocol styles, the complete OAuth flow, and the consent page in Chromium), and the end-to-end suite drives the tools against the real query service. **It has not been tried against the hosted claude.ai or ChatGPT services**; their requirements were taken from their documentation.
+
+Two things to keep in mind: `create_secret_key` puts a secret into the assistant's conversation, and query results contain text that came from your users' devices — an assistant that reads event data and can also change things should be given read-only access unless you need more.
+
 ## Privacy and data deletion
 
 - **Deletion requests** (UI or `POST /api/projects/{id}/deletions`) write a tombstone. The query service hides the person — including their earlier anonymous history — within a minute; the compactor rewrites the affected days, deletes their replay chunks, person properties and identity links, and the request is marked done. Copies in the WAL expire with WAL retention (30 days by default), which is therefore the upper bound for complete erasure.
@@ -601,6 +635,7 @@ Verified here and in CI: every component's own tests, the cross-language vectors
 - **Request cost with very many projects.** The compactor's minute-by-minute cycle only looks at projects the shipper reported as changed (one `LIST` per shard when idle), but its hourly full scan issues about ten `LIST` requests per project, and the shipper about five per active project per plan. On stores that charge per request this matters at tens of thousands of projects ([`docs/status.md`](docs/status.md) has the 10 000-project numbers).
 - **A narrow duplicate window.** If a device with a clock skew above five seconds re-sends a batch and a time filter or an event-list cursor falls exactly between the two copies, the later copy is visible until the day is compacted.
 - **`posthog-node` 6+** is not supported; neither is PostHog's own session recording.
+- **The MCP server was never connected to the hosted Claude or ChatGPT services**, only to their official client libraries.
 - **No OIDC/SSO, no e-mail delivery** (an administrator sets a new member's first password).
 - **All time buckets are UTC.** Paths analysis and pre-aggregations are not implemented.
 - The SDKs are not published to npm or Maven.
@@ -633,6 +668,8 @@ The full list, mapped to the design's production-readiness checklist: [`docs/sta
 | This README | English |
 | [`docs/design.md`](docs/design.md) — the full technical design (goals, formats, protocols, failure modes, roadmap) | Turkish |
 | [`docs/status.md`](docs/status.md) — verified vs. not verified, measurements, known defects | Turkish |
+| [`docs/mcp.md`](docs/mcp.md) — connecting Claude and ChatGPT, tools, OAuth, security | English |
+| [`deploy/coolify/README.md`](deploy/coolify/README.md) — deploying on Coolify | English |
 | [`spec/*.md`](spec/) — wire, WAL, manifest, Parquet, flags, replay, query API, control API | Turkish |
 | [`docs/runbooks/`](docs/runbooks/README.md) — operational procedures | Turkish |
 | Component READMEs | Turkish |

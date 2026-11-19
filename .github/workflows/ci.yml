@@ -51,6 +51,10 @@ jobs:
           npm install --no-save playwright@1
           npx playwright install --with-deps chromium
           go test -tags compat -count=1 ./ingest/compat/
+      - name: MCP client conformance (official clients, consent page in Chromium)
+        run: |
+          (cd control/mcp/conformance && npm ci)
+          go test -tags compat -count=1 ./control/mcp/conformance/
 
   web:
     name: web sdk + ui

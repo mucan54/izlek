@@ -40,6 +40,9 @@ type Config struct {
 	// the OAuth issuer and the base of the MCP resource identifier; OAuth
 	// stays switched off while it is empty.
 	PublicURL string
+	// PublicURLIgnored is set instead of PublicURL when LA_PUBLIC_URL was a
+	// plain-http address on a non-loopback host: the reason, for the start-up log.
+	PublicURLIgnored string
 	// PublicIngestURL is where SDKs send events (LA_PUBLIC_INGEST_URL).
 	// Only used to fill in setup snippets.
 	PublicIngestURL string
@@ -163,10 +166,17 @@ func FromEnvFunc(getenv func(string) string) (Config, error) {
 	boolean("LA_MCP_ENABLED", &c.MCPEnabled)
 	if v := strings.TrimSpace(getenv("LA_PUBLIC_URL")); v != "" {
 		origin, err := publicOrigin(v, true)
-		if err != nil {
+		switch {
+		case err == nil:
+			c.PublicURL = origin
+		case errors.Is(err, errPlainHTTP):
+			// A hosting platform may hand over a plain-http address before TLS
+			// is set up. Only OAuth needs this setting, so the control plane
+			// starts without OAuth and says so, rather than not starting.
+			c.PublicURLIgnored = err.Error()
+		default:
 			errs = append(errs, fmt.Errorf("LA_PUBLIC_URL: %w", err))
 		}
-		c.PublicURL = origin
 	}
 	if v := strings.TrimSpace(getenv("LA_PUBLIC_INGEST_URL")); v != "" {
 		u, err := url.Parse(v)
@@ -224,6 +234,9 @@ func FromEnvFunc(getenv func(string) string) (Config, error) {
 // (scheme://host[:port], lower-cased, no path). With requireTLS, plain http
 // is accepted for loopback hosts only: an OAuth issuer that is reachable
 // over the network must be served over HTTPS.
+// errPlainHTTP: a public URL that would carry OAuth tokens without TLS.
+var errPlainHTTP = errors.New("must use https (plain http is accepted for localhost only)")
+
 func publicOrigin(v string, requireTLS bool) (string, error) {
 	u, err := url.Parse(strings.TrimRight(v, "/"))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
@@ -231,7 +244,7 @@ func publicOrigin(v string, requireTLS bool) (string, error) {
 		return "", fmt.Errorf("want http(s)://host[:port] without a path, got %q", v)
 	}
 	if requireTLS && u.Scheme == "http" && !IsLoopbackHost(u.Hostname()) {
-		return "", fmt.Errorf("%q must use https (plain http is accepted for localhost only)", v)
+		return "", fmt.Errorf("%q: %w", v, errPlainHTTP)
 	}
 	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), nil
 }

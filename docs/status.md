@@ -140,6 +140,12 @@ Veri sentetiktir (küçük event'ler); gerçek veride `b` ve `w` farklı çıkar
 11. **Docker imajları ve Compose dosyası** yalnızca CI'da (`deploy/compose/smoke.sh`: derle, kur, event gönder, sorguda gör, kanarya, temiz kapanış) doğrulandı; tek makine, dosya deposu. TLS vekili, S3 ve çok makineli kurulumla denenmedi.
 12. `/q/paths` ve ön toplamalar (v1.1) yok.
 
+## 6b. Tasarımda olmayıp eklenenler
+
+- **MCP sunucusu ve OAuth yetkilendirme sunucusu** (`docs/mcp.md`): control plane `/mcp` ucunda 22 araç sunar (kurulum, flag, analitik). Kimlik: `admin` kapsamlı gizli anahtar ya da control plane'in kendi verdiği OAuth 2.1 token'ları. Doğrulama: Go testleri (yarış denetimiyle), resmî MCP istemci kitaplıklarıyla uyum testi (iki protokol kuşağı, tam OAuth akışı, Chromium'da onay sayfası) ve uçtan uca testte gerçek sorgu servisine karşı araç çağrıları. **Barındırılan claude.ai ve ChatGPT servislerine karşı hiç denenmedi.** Yeni bir saldırı yüzeyidir; dış güvenlik incelemesi kapsamına girmelidir.
+- **Panel dili**: İngilizce ve Türkçe; API hata mesajları henüz yalnızca Türkçe.
+- **Coolify compose dosyası** (`docker-compose.coolify.yml`): CI'da düz Docker Compose ile çalıştırılıyor; gerçek bir Coolify kurulumunda denenmedi.
+
 ## 7. Tasarıma eklenenler
 
 Uygulama sırasında tasarımın açık bıraktığı yerlerde alınan kararlar ilgili spec dosyalarında "Netleştirmeler" başlığı altındadır. Davranışı değiştiren başlıcaları:

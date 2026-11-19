@@ -85,6 +85,11 @@ services:
       LA_QUERY_INTERNAL_SECRET: "${LA_QUERY_INTERNAL_SECRET:?}"
       LA_UI_DIR: /ui
       LA_COOKIE_SECURE: "${LA_COOKIE_SECURE:-true}"
+      LA_TRUSTED_PROXIES: "${LA_TRUSTED_PROXIES:-0}"
+      # Dış adresler: SDK parçacıkları ve MCP ucunun OAuth girişi (Claude, ChatGPT) için.
+      # LA_PUBLIC_URL https olmalıdır (localhost hariç); boşsa /mcp yalnızca gizli anahtar kabul eder.
+      LA_PUBLIC_URL: "${LA_PUBLIC_URL:-}"
+      LA_PUBLIC_INGEST_URL: "${LA_PUBLIC_INGEST_URL:-}"
     volumes: [data:/data]
     ports: ["8090:8090"]
     healthcheck: { <<: *health, test: ["CMD", "/la-healthcheck", "http://127.0.0.1:8090/readyz"] }

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -485,6 +486,47 @@ func TestCacheFor(t *testing.T) {
 	} {
 		if got := cacheFor(header); got != want {
 			t.Errorf("cacheFor(%q) = %v, want %v", header, got, want)
+		}
+	}
+}
+
+// The metadata documents the two assistants publish, copied on 2026-11-19
+// from https://claude.ai/oauth/claude-code-client-metadata and
+// https://chatgpt.com/oauth/client.json. They must keep being acceptable.
+func TestPublishedClientDocuments(t *testing.T) {
+	docs := map[string]struct {
+		body      string
+		name      string
+		redirects []string
+	}{
+		"https://claude.ai/oauth/claude-code-client-metadata": {
+			`{"client_id":"https://claude.ai/oauth/claude-code-client-metadata","client_name":"Claude Code","client_uri":"https://claude.ai","redirect_uris":["http://localhost/callback","http://127.0.0.1/callback"],"grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"none"}`,
+			"Claude Code", []string{"http://localhost:3118/callback", "http://127.0.0.1:50123/callback"},
+		},
+		"https://chatgpt.com/oauth/client.json": {
+			`{"client_id":"https://chatgpt.com/oauth/client.json","client_uri":"https://chatgpt.com/","redirect_uris":["https://chatgpt.com/connector_platform_oauth_redirect"],"token_endpoint_auth_method":"private_key_jwt","token_endpoint_auth_methods_supported":["none","private_key_jwt"],"grant_types":["authorization_code","refresh_token","urn:ietf:params:oauth:grant-type:jwt-bearer"],"response_types":["code"],"client_name":"ChatGPT","logo_uri":"https://persistent.oaistatic.com/sonic/misc/openai-logo.png","token_endpoint_auth_signing_alg":"RS256","jwks_uri":"https://chatgpt.com/oauth/jwks.json"}`,
+			"ChatGPT", []string{"https://chatgpt.com/connector_platform_oauth_redirect"},
+		},
+	}
+	for id, doc := range docs {
+		if _, err := ValidateClientIDURL(id); err != nil {
+			t.Errorf("%s: %v", id, err)
+		}
+		var md Metadata
+		if err := json.Unmarshal([]byte(doc.body), &md); err != nil {
+			t.Fatal(err)
+		}
+		name, _, registered, err := md.Clean()
+		if err != nil || name != doc.name || md.ClientID != id || !md.AllowsPublic() {
+			t.Errorf("%s: name %q, public %v, err %v", id, name, md.AllowsPublic(), err)
+		}
+		for _, uri := range doc.redirects {
+			if !MatchRedirectURI(registered, uri) {
+				t.Errorf("%s: redirect URI %s is not matched", id, uri)
+			}
+		}
+		if MatchRedirectURI(registered, "https://evil.example/callback") || MatchRedirectURI(registered, "http://localhost.evil.example/callback") {
+			t.Errorf("%s: a foreign redirect URI is matched", id)
 		}
 	}
 }

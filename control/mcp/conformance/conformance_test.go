@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -89,6 +90,12 @@ func start(t *testing.T) *stack {
 				s.now().Add(-time.Minute).UnixMilli(), s.now().Add(-2*time.Minute).UnixMilli())
 		case "/q/trends":
 			io.WriteString(w, `{"buckets":["2026-11-01T00:00:00Z"],"series":[{"index":0,"label":"purchase","values":[3]}],"meta":{"elapsed_ms":2,"bytes_scanned":10,"files":1,"cached":false}}`)
+		case "/q/funnel":
+			io.WriteString(w, `{"steps":[{"event":"signup","count":120,"median_seconds":null},{"event":"purchase","count":31,"median_seconds":5400.0}],"meta":{"elapsed_ms":2,"bytes_scanned":10,"files":1,"cached":false}}`)
+		case "/q/retention":
+			io.WriteString(w, `{"cohorts":[{"period_start":"2026-11-02T00:00:00Z","size":42,"returned":[42,13]}],"meta":{"elapsed_ms":2,"bytes_scanned":10,"files":1,"cached":true}}`)
+		case "/q/events":
+			io.WriteString(w, `{"events":[{"uuid":"0190","ts":1795046400000,"recv_ts":1795046400123,"event":"purchase","person_key":"u:42","anon_id":"a","user_id":"42","session_id":null,"platform":"ios","country":"TR","url_path":null,"screen":"Home","flags":0,"props":{"amount":12.5}}],"next_cursor":null,"meta":{"elapsed_ms":2,"bytes_scanned":10,"files":1,"cached":false}}`)
 		default:
 			w.WriteHeader(http.StatusBadRequest)
 			io.WriteString(w, `{"error":{"code":"bad_request","message":"not implemented by the fake"}}`)
@@ -354,5 +361,88 @@ func TestModernClient(t *testing.T) {
 	}
 	if !viaOAuth {
 		t.Fatal("token.create is not attributed to the OAuth client in the audit log")
+	}
+}
+
+// TestConsentInABrowser signs in and approves in headless Chromium: the one
+// place where the pages' Content-Security-Policy, the cookies and the
+// same-origin rules of the forms are enforced for real. It needs Playwright
+// (the PostHog compatibility test of ingest/compat uses the same install).
+func TestConsentInABrowser(t *testing.T) {
+	s := start(t)
+	// The client's redirect URI: a local page that records what arrives.
+	arrived := make(chan url.Values, 4)
+	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/callback" {
+			arrived <- r.URL.Query()
+		}
+		io.WriteString(w, "<!doctype html><title>callback</title>done")
+	}))
+	defer callback.Close()
+	redirect := callback.URL + "/callback"
+
+	reg, _ := json.Marshal(map[string]any{"client_name": "Browser conformance client", "redirect_uris": []string{redirect}})
+	resp, err := http.Post(s.base+"/oauth/register", "application/json", bytes.NewReader(reg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var client struct {
+		ClientID string `json:"client_id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&client)
+	resp.Body.Close()
+	if resp.StatusCode != 201 || client.ClientID == "" {
+		t.Fatalf("registration: %d", resp.StatusCode)
+	}
+	const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	const challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM" // RFC 7636 appendix B
+
+	for locale, want := range map[string][2]string{"en-US": {"Sign in to izlek", "Connect an application"}, "tr-TR": {"izlek'e giriş yapın", "Uygulama bağla"}} {
+		state := "state-" + locale
+		q := url.Values{"response_type": {"code"}, "client_id": {client.ClientID}, "redirect_uri": {redirect}, "state": {state},
+			"scope": {"izlek:read izlek:admin"}, "code_challenge": {challenge}, "code_challenge_method": {"S256"}, "resource": {s.base + "/mcp"}}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		cmd := exec.CommandContext(ctx, "node", "browser.cjs", s.base+"/oauth/authorize?"+q.Encode(), callback.URL, testEmail, testPassword, locale)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		cancel()
+		if err != nil {
+			t.Fatalf("%s: browser run failed: %v\nstdout:\n%s\nstderr:\n%s", locale, err, stdout.String(), stderr.String())
+		}
+		var out struct {
+			SignIn, Consent, Styled, Landed string
+			Framed                          bool
+			Problems                        []string
+		}
+		if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &out); err != nil {
+			t.Fatalf("%s: %v: %s", locale, err, stdout.String())
+		}
+		t.Logf("%s: %+v", locale, out)
+		// The pages follow the browser's language, are styled (the nonce
+		// works) and nothing was blocked by the Content-Security-Policy —
+		// in particular not the redirect back to the client after "Approve".
+		if out.SignIn != want[0] || out.Consent != want[1] || out.Styled != "12px" || len(out.Problems) != 0 || !strings.HasPrefix(out.Landed, redirect+"?") {
+			t.Fatalf("%s: unexpected browser result: %+v", locale, out)
+		}
+		var back url.Values
+		select {
+		case back = <-arrived:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: the callback was never requested", locale)
+		}
+		if back.Get("state") != state || back.Get("iss") != s.base || !strings.HasPrefix(back.Get("code"), "oac_") {
+			t.Fatalf("%s: callback parameters: %v", locale, back)
+		}
+		// The code the browser carried is redeemable.
+		tok, err := http.PostForm(s.base+"/oauth/token", url.Values{"grant_type": {"authorization_code"}, "code": {back.Get("code")},
+			"client_id": {client.ClientID}, "redirect_uri": {redirect}, "code_verifier": {verifier}, "resource": {s.base + "/mcp"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		tok.Body.Close()
+		if tok.StatusCode != 200 {
+			t.Fatalf("%s: token exchange: %d", locale, tok.StatusCode)
+		}
 	}
 }

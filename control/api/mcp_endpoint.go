@@ -158,11 +158,6 @@ func (s *Server) serveMCP(w *statusWriter, r *http.Request, info *requestInfo) {
 	// for a request this server would otherwise reject.
 	now := s.now()
 	ip := s.clientIP(r)
-	if blocked, wait := s.mcpAuthFailLimit.Blocked(ip); blocked {
-		w.Header().Set("Retry-After", retryAfter(wait))
-		mcp.WriteError(w, http.StatusTooManyRequests, nil, &mcp.Error{Code: mcp.CodeInvalidRequest, Message: "Too many failed authentication attempts"})
-		return
-	}
 	token, ok := bearerToken(r)
 	if !ok || token == "" {
 		s.mMCP.With("unauthenticated").Inc()
@@ -182,6 +177,17 @@ func (s *Server) serveMCP(w *statusWriter, r *http.Request, info *requestInfo) {
 		mcp.WriteError(w, http.StatusForbidden, nil, &mcp.Error{Code: mcp.CodeInvalidRequest, Message: "This secret key does not have the admin scope; create a key with the admin scope or connect with OAuth"})
 		return
 	default:
+		// An address that keeps presenting bad credentials is told to slow
+		// down instead of being sent into the OAuth flow again and again.
+		// Valid credentials from the same address keep working: assistants
+		// reach this server from shared addresses, and one misbehaving
+		// client must not lock the others out.
+		if blocked, wait := s.mcpAuthFailLimit.Blocked(ip); blocked {
+			s.mMCP.With("invalid_token").Inc()
+			w.Header().Set("Retry-After", retryAfter(wait))
+			mcp.WriteError(w, http.StatusTooManyRequests, nil, &mcp.Error{Code: mcp.CodeInvalidRequest, Message: "Too many requests with invalid credentials"})
+			return
+		}
 		s.mcpAuthFailLimit.Add(ip)
 		s.mMCP.With("invalid_token").Inc()
 		s.mcpUnauthorized(w, "invalid_token", "The access token is invalid, expired or revoked", "The bearer token is invalid, expired or revoked")

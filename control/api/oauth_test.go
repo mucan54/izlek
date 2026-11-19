@@ -22,6 +22,7 @@ import (
 
 	"github.com/mucan54/izlek/control/api"
 	"github.com/mucan54/izlek/control/app"
+	"github.com/mucan54/izlek/control/auth"
 	"github.com/mucan54/izlek/control/config"
 	"github.com/mucan54/izlek/control/oauth"
 )
@@ -206,7 +207,7 @@ func (e *env) code(c *client, q url.Values) string {
 	return back.Get("code")
 }
 
-type tokens struct {
+type tokenSet struct {
 	AccessToken  string `json:"access_token"`
 	TokenType    string `json:"token_type"`
 	ExpiresIn    int64  `json:"expires_in"`
@@ -253,10 +254,10 @@ func wantOAuthError(t *testing.T, r *response, status int, code string) {
 }
 
 // grant runs the whole flow and returns the client id and its tokens.
-func (e *env) grant(c *client, scope string) (string, tokens) {
+func (e *env) grant(c *client, scope string) (string, tokenSet) {
 	e.t.Helper()
 	clientID := e.register("Test Assistant", testRedirect)
-	var tok tokens
+	var tok tokenSet
 	e.token(exchange(clientID, e.code(c, authzQuery(clientID, set("scope", scope))))).want(200).json(&tok)
 	return clientID, tok
 }
@@ -453,13 +454,13 @@ func TestAuthorizationCodeFlow(t *testing.T) {
 	page := e.consentPage(e.owner, q).want(200)
 	body := string(page.Body)
 	for _, want := range []string{
-		"Test Assistant",                     // who asks
-		"client.example.com",                 // where the access goes
-		"owner@example.com",                  // which account approves
-		"Acme", "owner",                      // with which role
-		"run analytics queries",              // the read scope, in words
-		"Create and change projects",         // the admin scope, in words
-		"registered itself",                  // nobody verified the name
+		"Test Assistant",     // who asks
+		"client.example.com", // where the access goes
+		"owner@example.com",  // which account approves
+		"Acme", "owner",      // with which role
+		"run analytics queries",      // the read scope, in words
+		"Create and change projects", // the admin scope, in words
+		"registered itself",          // nobody verified the name
 		`name="action" value="approve"`, `name="action" value="deny"`,
 	} {
 		if !strings.Contains(body, want) {
@@ -472,7 +473,7 @@ func TestAuthorizationCodeFlow(t *testing.T) {
 		!strings.Contains(csp, "form-action 'self' https://client.example.com") {
 		t.Errorf("CSP %q", csp)
 	}
-	if page.Header.Get("X-Frame-Options") != "DENY" || page.Header.Get("Cache-Control") != "no-store" || page.Header.Get("Referrer-Policy") != "no-referrer" {
+	if page.Header.Get("X-Frame-Options") != "DENY" || page.Header.Get("Cache-Control") != "no-store" || page.Header.Get("Referrer-Policy") != "same-origin" {
 		t.Errorf("headers: %v", page.Header)
 	}
 	// Showing the page changes nothing.
@@ -481,7 +482,7 @@ func TestAuthorizationCodeFlow(t *testing.T) {
 	}
 
 	code := e.code(e.owner, q)
-	var tok tokens
+	var tok tokenSet
 	r := e.token(exchange(clientID, code)).want(200).json(&tok)
 	if r.Header.Get("Cache-Control") != "no-store" || r.Header.Get("Pragma") != "no-cache" {
 		t.Fatalf("token response headers: %v", r.Header)
@@ -578,7 +579,7 @@ func TestAuthorizationCodeIsSingleUseAndShortLived(t *testing.T) {
 
 	// Used twice: the second attempt fails and takes back what the first got.
 	code = e.code(e.owner, q)
-	var tok tokens
+	var tok tokenSet
 	e.token(exchange(clientID, code)).want(200).json(&tok)
 	if res := e.callTool(tok.AccessToken, "list_projects", nil); res.IsError {
 		t.Fatalf("token does not work: %+v", res)
@@ -605,7 +606,7 @@ func TestRefreshTokensRotate(t *testing.T) {
 	wantOAuthError(t, e.token(refreshing(clientID, oauth.NewRefreshToken())), 400, "invalid_grant")
 
 	e.clock.Advance(30 * time.Minute)
-	var second tokens
+	var second tokenSet
 	e.token(refreshing(clientID, first.RefreshToken, set("resource", testResource), set("scope", "izlek:read"))).want(200).json(&second)
 	if second.AccessToken == first.AccessToken || second.RefreshToken == first.RefreshToken || second.ExpiresIn != 3600 || second.Scope != "izlek:read izlek:admin" {
 		t.Fatalf("second pair: %+v", second)
@@ -619,7 +620,7 @@ func TestRefreshTokensRotate(t *testing.T) {
 
 	// The first refresh token is spent. Using it again is treated as theft:
 	// the grant ends, with every token under it.
-	var third tokens
+	var third tokenSet
 	e.token(refreshing(clientID, second.RefreshToken)).want(200).json(&third)
 	wantOAuthError(t, e.token(refreshing(clientID, first.RefreshToken)), 400, "invalid_grant")
 	e.mcp(third.AccessToken, "tools/list", nil).want(401)
@@ -658,8 +659,9 @@ func TestTokenLifetimes(t *testing.T) {
 	e.clock.Advance(30 * 24 * time.Hour)
 	wantOAuthError(t, e.token(refreshing(clientID, tok.RefreshToken)), 400, "invalid_grant")
 
-	// A grant ends after 180 days however often it is refreshed.
-	clientID, tok = e.grant(e.owner, "izlek:read")
+	// A grant ends after 180 days however often it is refreshed. (The
+	// browser session of the owner has expired by now, too.)
+	clientID, tok = e.grant(e.login("owner@example.com", testPassword), "izlek:read")
 	for day := 0; day < 180; day += 20 {
 		e.clock.Advance(20 * 24 * time.Hour)
 		r := e.token(refreshing(clientID, tok.RefreshToken))
@@ -687,7 +689,7 @@ func TestRevocation(t *testing.T) {
 	// Revoking an access token ends that token only.
 	revoke(url.Values{"token": {tok.AccessToken}, "token_type_hint": {"access_token"}}).want(200)
 	e.mcp(tok.AccessToken, "tools/list", nil).want(401)
-	var next tokens
+	var next tokenSet
 	e.token(refreshing(clientID, tok.RefreshToken)).want(200).json(&next)
 	e.mcp(next.AccessToken, "tools/list", nil).want(200)
 
@@ -836,7 +838,7 @@ func TestAuthorizeErrorsGoBackToAVerifiedClient(t *testing.T) {
 	// origin; the token is bound to the MCP endpoint either way.
 	for _, edit := range []func(url.Values){del("resource"), set("resource", testPublicURL), set("resource", "HTTPS://IZLEK.EXAMPLE.COM/mcp/")} {
 		q := authzQuery(clientID, edit)
-		var tok tokens
+		var tok tokenSet
 		e.token(exchange(clientID, e.code(e.owner, q), del("resource"))).want(200).json(&tok)
 		e.mcp(tok.AccessToken, "tools/list", nil).want(200)
 	}
@@ -851,7 +853,7 @@ func TestScopeSelection(t *testing.T) {
 	issued := func(q url.Values, edit ...func(url.Values)) string {
 		t.Helper()
 		back := backTo(t, e.decide(e.owner, q, "approve", edit...), 303)
-		var tok tokens
+		var tok tokenSet
 		e.token(exchange(clientID, back.Get("code"))).want(200).json(&tok)
 		return tok.Scope
 	}
@@ -1142,7 +1144,7 @@ func TestClientIDMetadataDocument(t *testing.T) {
 	if err != nil || back.Host != "example.com" || back.Query().Get("iss") != testPublicURL {
 		t.Fatalf("redirect: %v %v", back, err)
 	}
-	var tok tokens
+	var tok tokenSet
 	e.token(exchange(testCIMD, back.Query().Get("code"), set("redirect_uri", "https://example.com/cb"))).want(200).json(&tok)
 	e.mcp(tok.AccessToken, "tools/list", nil).want(200)
 	apps := e.owner.get("/api/me/connected-apps").want(200).list()
@@ -1219,13 +1221,26 @@ func TestTokenEndpointThrottlesGuessing(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		wantOAuthError(t, e.token(refreshing(clientID, oauth.NewRefreshToken())), 400, "invalid_grant")
 	}
-	r := e.token(refreshing(clientID, tok.RefreshToken))
+	r := e.token(refreshing(clientID, oauth.NewRefreshToken()))
 	wantOAuthError(t, r, 429, "temporarily_unavailable")
 	if r.Header.Get("Retry-After") == "" {
 		t.Fatal("no Retry-After")
 	}
+	wantOAuthError(t, e.token(exchange(clientID, oauth.NewCode())), 429, "temporarily_unavailable")
+	// A valid request from the same (possibly shared) address still works.
+	var next tokenSet
+	e.token(refreshing(clientID, tok.RefreshToken)).want(200).json(&next)
 	e.clock.Advance(61 * time.Second)
-	e.token(refreshing(clientID, tok.RefreshToken)).want(200)
+	wantOAuthError(t, e.token(refreshing(clientID, oauth.NewRefreshToken())), 400, "invalid_grant")
+
+	// Every request counts against a generous per-address budget.
+	for i := 0; i < 299; i++ {
+		e.form("/oauth/revoke", url.Values{"token": {"x"}}, nil).want(200)
+	}
+	wantOAuthError(t, e.token(refreshing(clientID, next.RefreshToken)), 429, "temporarily_unavailable")
+	wantOAuthError(t, e.form("/oauth/revoke", url.Values{"token": {"x"}}, nil), 429, "temporarily_unavailable")
+	e.clock.Advance(61 * time.Second)
+	e.token(refreshing(clientID, next.RefreshToken)).want(200)
 }
 
 func TestPruneOAuth(t *testing.T) {
@@ -1264,5 +1279,50 @@ func TestPruneOAuth(t *testing.T) {
 		if n := e.scalar(`SELECT COUNT(*) FROM ` + table); n != 0 {
 			t.Errorf("%s: %d rows left", table, n)
 		}
+	}
+}
+
+func TestSignInOnTheAuthorizationPageWithTwoStepVerification(t *testing.T) {
+	e := newOAuthEnv(t)
+	clientID := e.register("Test Assistant", testRedirect)
+	// An application authorised before the second factor existed…
+	_, earlier := e.grant(e.owner, "izlek:read")
+
+	var begin struct {
+		Secret string `json:"secret"`
+	}
+	e.owner.post("/api/me/totp/begin", nil).want(200).json(&begin)
+	code := func() string {
+		c, err := auth.TOTPCode(begin.Secret, auth.TOTPStep(e.clock.Now()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	e.owner.post("/api/me/totp/enable", map[string]any{"code": code()}).want(200)
+	// …has to be approved again once it is switched on.
+	e.mcp(earlier.AccessToken, "tools/list", nil).want(401)
+
+	q := authzQuery(clientID)
+	page := e.raw("GET", "/oauth/authorize?"+q.Encode(), map[string]string{"Accept-Language": "en"}, "").want(200)
+	form := hiddenFields(t, page)
+	pre := form.Get("csrf")
+	signIn := func(totp string) *response {
+		return e.form("/oauth/authorize", url.Values{"q": {form.Get("q")}, "csrf": {pre}, "action": {"login"},
+			"email": {"owner@example.com"}, "password": {testPassword}, "totp": {totp}},
+			map[string]string{"Cookie": "__Host-la_oauth_csrf=" + pre, "Accept-Language": "en", "Origin": testPublicURL})
+	}
+	// The password alone is not enough, and a wrong code is refused.
+	r := signIn("").want(401)
+	if !strings.Contains(string(r.Body), "Enter the verification code") || len(r.Header.Values("Set-Cookie")) != 0 {
+		t.Fatalf("without a code: %v %s", r.Header.Values("Set-Cookie"), r.Body)
+	}
+	if r := signIn("000000").want(401); !strings.Contains(string(r.Body), "verification code is not correct") {
+		t.Fatalf("wrong code: %s", r.Body)
+	}
+	e.clock.Advance(30 * time.Second) // the code that enabled TOTP cannot be used twice
+	r = signIn(code()).want(303)
+	if !strings.Contains(strings.Join(r.Header.Values("Set-Cookie"), ";"), "la_session=") || !strings.HasPrefix(r.Header.Get("Location"), "/oauth/authorize?") {
+		t.Fatalf("sign-in with a code: %v", r.Header)
 	}
 }

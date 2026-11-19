@@ -208,6 +208,7 @@ const controlEnv = {
   LA_COOKIE_SECURE: 'false',
   LA_CONTROL_PUBLISH_DEBOUNCE_MS: '100',
   LA_CONTROL_DELETION_CHECK_SECONDS: '1',
+  LA_PUBLIC_INGEST_URL: INGEST,
 }
 const engineEnv = { ...storeEnv, LA_METRICS_ADDR: 'off' }
 
@@ -514,6 +515,57 @@ try {
     assert.ok(schema.person_props.includes('plan'))
     // Person property filters use the current value.
     assert.equal(await (async () => (await q('trends', { interval: 'day', series: [{ event: 'e2e_web', agg: 'count' }], filter: { prop: 'person.plan', op: 'eq', value: 'pro' } })).series[0].values.reduce((a, b) => a + b, 0))(), 3)
+  })
+
+  await step('MCP: an assistant with a secret key sets up and checks an installation (real query service behind it)', async () => {
+    let id = 0
+    const rpc = async (method, params, { key = boot.secret, version } = {}) => {
+      const res = await fetch(`${CONTROL}/mcp`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...(version ? { 'MCP-Protocol-Version': version } : {}) },
+        body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }),
+      })
+      return { status: res.status, headers: res.headers, body: res.status == 202 ? null : await res.json().catch(() => null) }
+    }
+    // No credential → 401 that tells an OAuth client where to look (or, without a public URL, at least Bearer).
+    const anon = await fetch(`${CONTROL}/mcp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' })
+    assert.equal(anon.status, 401)
+    assert.match(anon.headers.get('www-authenticate') || '', /^Bearer/)
+    assert.equal((await rpc('tools/list', {}, { key: boot.token })).status, 401, 'a write token is not a credential for MCP')
+
+    const init = await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '0' } })
+    assert.equal(init.status, 200, JSON.stringify(init.body))
+    const V = init.body.result.protocolVersion
+    assert.equal(V, '2025-06-18')
+    assert.ok(init.body.result.serverInfo.name)
+    const call = async (name, args = {}) => {
+      const r = await rpc('tools/call', { name, arguments: args }, { version: V })
+      assert.equal(r.status, 200, `${name}: ${JSON.stringify(r.body)}`)
+      assert.ok(!r.body.error && !r.body.result.isError, `${name}: ${JSON.stringify(r.body).slice(0, 500)}`)
+      return r.body.result.structuredContent
+    }
+    const tools = (await rpc('tools/list', {}, { version: V })).body.result.tools.map((t) => t.name)
+    for (const t of ['list_projects', 'get_sdk_setup', 'verify_installation', 'create_flag', 'query_funnel', 'run_sql']) assert.ok(tools.includes(t), t)
+    assert.ok(!tools.includes('create_project'), 'a project key cannot create projects')
+
+    const setup = await call('get_sdk_setup', { platform: 'web' })
+    const text = JSON.stringify(setup)
+    assert.ok(text.includes(boot.token) && text.includes(INGEST), 'the snippet carries the real write token and ingestion host')
+
+    const seen = await call('verify_installation', { minutes: 60 })
+    const seenText = JSON.stringify(seen)
+    assert.ok(seenText.includes('e2e_web') && seenText.includes('purchase'), seenText.slice(0, 400))
+
+    const funnel = await call('query_funnel', { ...RANGE, steps: [{ event: 'e2e_web' }, { event: 'purchase' }], window_seconds: 3600 })
+    assert.deepEqual(funnel.steps.map((s) => s.count), [1, 1])
+    const rows = await call('run_sql', { ...RANGE, sql: "SELECT count(*) FROM events WHERE event = 'e2e_web'" })
+    assert.deepEqual(rows.rows, [[3]])
+
+    await call('create_flag', { key: 'mcp_flag', name: 'Created by an assistant', enabled: true, rules: [{ rollout: 10000 }] })
+    await waitFor('the flag in the published ruleset', async () => (await (await fetch(`${INGEST}/flags/${boot.token}.json`)).json()).flags.some((f) => f.key == 'mcp_flag'), 15_000)
+    // An unknown tool is a protocol error, not a crash.
+    const bad = await rpc('tools/call', { name: 'drop_everything', arguments: {} }, { version: V })
+    assert.ok(bad.body.error, JSON.stringify(bad.body))
   })
 
   await step('compaction keeps every count (exactly-once across L0 → L1)', async () => {

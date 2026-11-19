@@ -70,9 +70,13 @@ services:
       - LA_QUERY_INTERNAL_SECRET=${SERVICE_PASSWORD_64_QUERYSECRET}
       # Coolify's proxy terminates TLS, so cookies must be Secure. Set false only for a plain-HTTP test.
       - LA_COOKIE_SECURE=${LA_COOKIE_SECURE:-true}
-      # Public addresses, used for SDK snippets and the MCP/OAuth endpoints.
-      - LA_PUBLIC_URL=${SERVICE_URL_CONTROL_8090}
-      - LA_PUBLIC_INGEST_URL=${SERVICE_URL_INGEST_8080}
+      # Public addresses, used for SDK snippets and for the MCP endpoint's OAuth sign-in
+      # (Claude, ChatGPT). They follow the domains Coolify assigned; set them yourself if
+      # they come out wrong. A plain-http address switches OAuth off (with a warning in the log).
+      - LA_PUBLIC_URL=${LA_PUBLIC_URL:-${SERVICE_URL_CONTROL_8090}}
+      - LA_PUBLIC_INGEST_URL=${LA_PUBLIC_INGEST_URL:-${SERVICE_URL_INGEST_8080}}
+      # Same meaning as for ingestion: needed so that sign-in rate limits apply per visitor.
+      - LA_TRUSTED_PROXIES=${LA_TRUSTED_PROXIES:-1}
     volumes: [data:/data]
     expose: ["8090"]
     healthcheck: { <<: *health, test: ["CMD", "/la-healthcheck", "http://127.0.0.1:8090/readyz"] }

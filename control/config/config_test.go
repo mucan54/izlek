@@ -58,7 +58,12 @@ func TestPublicURLs(t *testing.T) {
 			t.Errorf("%s: %v %q", ok, err, c.PublicURL)
 		}
 	}
-	for _, bad := range []string{"http://izlek.example.com", "https://izlek.example.com/control", "izlek.example.com",
+	// … so a plain-http public address does not stop the service: OAuth stays off and the reason is kept.
+	if c, err := FromEnvFunc(env(map[string]string{"LA_PUBLIC_URL": "http://izlek.example.com"})); err != nil ||
+		c.PublicURL != "" || c.OAuthEnabled() || !strings.Contains(c.PublicURLIgnored, "must use https") {
+		t.Errorf("plain http: %v %+v", err, c)
+	}
+	for _, bad := range []string{"https://izlek.example.com/control", "izlek.example.com",
 		"https://user@izlek.example.com", "https://izlek.example.com?x=1", "ftp://izlek.example.com"} {
 		if _, err := FromEnvFunc(env(map[string]string{"LA_PUBLIC_URL": bad})); err == nil || !strings.Contains(err.Error(), "LA_PUBLIC_URL") {
 			t.Errorf("LA_PUBLIC_URL=%q: err = %v", bad, err)

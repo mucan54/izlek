@@ -15,6 +15,7 @@ Tüm uçlar JSON konuşur. Hata gövdesi: `{"error": {"code": "…", "message": 
 | `GET /api/me` | `{ user: {id, email, totp_enabled}, orgs: [{id, name, role}] }` |
 | `POST /api/me/password` | `{current, new}` |
 | `POST /api/me/totp/begin` → `{secret, otpauth_url}` · `POST /api/me/totp/enable` `{code}` · `POST /api/me/totp/disable` `{password}` | TOTP (RFC 6238, SHA-1, 30 sn, 6 hane) |
+| `GET /api/me/connected-apps` · `DELETE /api/me/connected-apps/{id}` | Kullanıcının OAuth ile bağladığı uygulamalar ve iptali (§13.4) |
 
 - Parola: argon2id (`m=64MiB, t=3, p=1` ya da daha güçlü), en az 10 karakter.
 - Oturum çerezi: `la_session`, `HttpOnly`, `SameSite=Lax`, `Secure` (TLS arkasında), 256 bit rastgele; sunucuda yalnızca SHA-256'sı saklanır; 30 gün kayan süre.
@@ -22,6 +23,7 @@ Tüm uçlar JSON konuşur. Hata gövdesi: `{"error": {"code": "…", "message": 
 - Giriş denemeleri IP + e-posta başına sınırlanır (5 / dk).
 - API anahtarı ile erişim: `Authorization: Bearer sk_…` (`admin` kapsamlı) yalnızca kendi projesinin `/api/projects/{pid}/…` uçlarına; çerez/CSRF gerekmez.
 - OIDC: v1'de yok (belgelenmiş eksik); kullanıcı tablosu `oidc_subject` sütunu taşır.
+- MCP ucu (`/mcp`) aynı `sk_` anahtarını ya da control plane'in kendi verdiği OAuth erişim token'ını kabul eder (§13).
 
 Roller (org düzeyinde): `owner` > `admin` > `member` > `viewer`.
 
@@ -145,6 +147,11 @@ LA_QUERY_INTERNAL_SECRET=…                 # query servisiyle paylaşılan sı
 LA_UI_DIR=/usr/share/la/ui
 LA_COOKIE_SECURE=true
 LA_STORE_URL / LA_S3_*                     # manifest.md §0
+LA_MCP_ENABLED=true                        # /mcp, /oauth/*, /.well-known/oauth-* (§13)
+LA_PUBLIC_URL=https://izlek.example.com    # control plane'in genel kökeni; OAuth için zorunlu
+LA_PUBLIC_INGEST_URL=https://in.example.com  # get_sdk_setup parçacıklarındaki ingestion adresi
+LA_MCP_ALLOWED_ORIGINS=                    # /mcp'yi tarayıcıdan çağırabilecek ek kökenler (virgüllü)
+LA_OAUTH_CLIENT_REGISTRATION=cimd,dcr      # OAuth istemcisi tanıtma yolları
 ```
 
 ## 12. Netleştirmeler (UI ile backend arasında bağlayıcı)
@@ -158,3 +165,98 @@ LA_STORE_URL / LA_S3_*                     # manifest.md §0
 - Flag `PUT` gövdesi `{key, name, description, enabled, rules, default}`'tir; `salt` ve `version` istemciden alınmaz. `default: false` ≡ `null`.
 - Insight `query` alanı **opak** JSON olarak saklanır (`range`, `ui` gibi sorgu servisinin bilmediği alanlar içerebilir); control plane içini doğrulamaz. Dashboard öğeleri 12 sütunlu ızgarada tam sayı `x, y, w, h` taşır.
 - Kimlikler (kullanıcı, org, insight, dashboard, anahtar) istemci için opaktır.
+
+## 13. MCP sunucusu ve OAuth yetkilendirme sunucusu
+
+Kullanım kılavuzu (İngilizce): `docs/mcp.md`. Bu bölüm sözleşmedir. `LA_MCP_ENABLED=false` ise bu bölümdeki hiçbir uç yoktur (404).
+
+### 13.1 `POST /mcp`
+
+Model Context Protocol, Streamable HTTP taşıması. Her istek tek bir JSON-RPC iletisidir; her yanıt tek bir `application/json` nesnesidir. Sunucu olay akışı açmaz, oturum tutmaz (`Mcp-Session-Id` vermez); `GET`/`DELETE` → `405`.
+
+| Revizyon | Davranış |
+|---|---|
+| `2026-07-28` | Durumsuz. İstek `_meta["io.modelcontextprotocol/protocolVersion"]` ve `…/clientCapabilities` taşır; `MCP-Protocol-Version` başlığı gövdeyle aynı olmalı, `Mcp-Method` (ve `tools/call` için `Mcp-Name`) gövdeyi yansıtmalıdır; uyuşmazlık `400` + `-32020`. `server/discover` vardır. Sonuçlar `resultType: "complete"` ve `_meta` içinde `serverInfo` taşır; `tools/list` ayrıca `ttlMs`, `cacheScope: "private"`. Bilinmeyen yöntem `404` + `-32601`, geçersiz parametre `400` + `-32602`. |
+| `2025-11-25`, `2025-06-18`, `2025-03-26` | `initialize` el sıkışması: istenen revizyon destekleniyorsa aynısı, değilse `2025-11-25` döner. Sonraki isteklerde `MCP-Protocol-Version` (yoksa `2025-03-26` sayılır). `ping`, `notifications/*` (`202`). JSON-RPC hataları `200` ile döner. Toplu (batch) istek kabul edilmez. |
+
+Desteklenmeyen revizyon: `400` + `-32022`, `data: {supported, requested}`. Yöntemler: `tools/list`, `tools/call` (ve yukarıdakiler). Araç hataları (geçersiz argüman, yetki, bulunamadı, sorgu reddi) `isError: true` taşıyan **sonuçtur**; bilinmeyen araç ve bozuk istek JSON-RPC hatasıdır (`-32602`).
+
+`Origin` başlığı: yoksa kabul; varsa yalnızca `LA_PUBLIC_URL` ve `LA_MCP_ALLOWED_ORIGINS` (başkası `403`). İzinli kökenlere CORS başlıkları verilir; köken asla körlemesine yansıtılmaz.
+
+### 13.2 MCP kimlik doğrulama
+
+`Authorization: Bearer …` zorunludur; çerez oturumu **kabul edilmez**.
+
+| Kimlik | Kim olarak | Kapsam |
+|---|---|---|
+| `sk_…` (`admin` kapsamlı) | Anahtar; kendi projesinde `admin` rolü | Yalnızca o proje. `create_project` yoktur. `admin` kapsamı yoksa `403` |
+| OAuth erişim token'ı (`oat_…`) | Onaylayan kullanıcı; her org'daki **güncel** rolü | Grant'in kapsamlarıyla sınırlı: `izlek:read`, `izlek:admin` (`admin`, `read`'i içerir) |
+
+- Kimlik yok/geçersiz: `401` + `WWW-Authenticate: Bearer [error="invalid_token", …] scope="izlek:read izlek:admin", resource_metadata="<LA_PUBLIC_URL>/.well-known/oauth-protected-resource/mcp"` (`LA_PUBLIC_URL` yoksa `Bearer realm="izlek"`). Bu yanıt gövde okunmadan verilir.
+- Token'ın kapsamı araca yetmiyorsa: `403` + `WWW-Authenticate: Bearer error="insufficient_scope", scope="…", resource_metadata="…"`. `tools/list` zaten yalnızca kapsamın izin verdiği araçları listeler.
+- Erişim token'ı yalnızca `<LA_PUBLIC_URL>/mcp` kaynağı için verilmişse geçerlidir (RFC 8707).
+- Rol denetimi araçların çağırdığı API işleyicilerindedir (§1 tablosu): kapsam rolü aşamaz; başka org'un projesi "bulunamadı"dır.
+- Sınırlar: anahtar/grant başına dakikada 300 araç çağrısı; sorgu yanıtı en çok 256 KB.
+
+### 13.3 Araçlar
+
+Her araç, ilgili `/api/…` işleyicisini çağıranın kimliğiyle çalıştırır (aynı doğrulama, aynı rol denetimi, aynı denetim kaydı). `project_id`, çağıran tek proje görebiliyorsa verilmeyebilir. Sonuç: `structuredContent` (nesne) + aynı JSON'u taşıyan metin bloğu.
+
+| Araç | Kapsam | En düşük rol | Karşılığı |
+|---|---|---|---|
+| `list_projects` | read | viewer | `GET /api/projects` + kullanıcının org'ları |
+| `create_project` | admin | admin | `POST /api/projects` (yalnızca OAuth) |
+| `get_project` | read | viewer | `GET /api/projects/{pid}` |
+| `update_project_settings` | admin | admin | `PATCH /api/projects/{pid}` |
+| `list_write_tokens` | read | viewer | `GET …/tokens` |
+| `create_write_token` | admin | admin | `POST …/tokens` |
+| `update_write_token` | admin | admin | `PATCH …/tokens/{token}` |
+| `list_secret_keys` | read | admin | `GET …/keys` |
+| `create_secret_key` | admin | admin | `POST …/keys` (sır yalnızca bu sonuçta) |
+| `get_sdk_setup` | read | viewer | Token ve `LA_PUBLIC_INGEST_URL` ile doldurulmuş kurulum parçacıkları (`web`, `web_module`, `android`, `ios`, `jvm`, `posthog_js`, `posthog_node`, `http`); adres yoksa `https://YOUR-INGEST-HOST.invalid` ve `ingest_host_is_placeholder: true` |
+| `verify_installation` | read | viewer | Son N dakikada (1–1440, varsayılan 30) event ve platform başına sayılar, son event zamanı; `/q/sql` üzerinden |
+| `list_flags` · `get_flag` · `evaluate_flag` | read | viewer | §5 |
+| `create_flag` | admin | admin | `POST …/flags` |
+| `update_flag` | admin | admin | Mevcut tanımı okur, verilen alanları değiştirir, `PUT …/flags/{key}`; `expected_version` uyuşmazsa reddedilir |
+| `query_trends` · `query_funnel` · `query_retention` · `query_events` · `run_sql` · `get_schema` | read | viewer | §8 sorgu vekili; `project_id` dışındaki argümanlar gövde olarak iletilir |
+
+Araç olarak **sunulmayanlar** (yalnızca UI/API): proje kapatma, token/anahtar/flag silme, üye yönetimi, silme istekleri, insight ve dashboard'lar.
+
+Araç açıklamaları (`annotations`): `readOnlyHint` (okuma araçlarında `true`), `destructiveHint` (`update_*` araçlarında `true`), `idempotentHint`, `openWorldHint: false`.
+
+### 13.4 OAuth 2.1 yetkilendirme sunucusu
+
+Yalnızca `LA_PUBLIC_URL` ayarlıysa açıktır (değilse `/oauth/*` → `404 oauth_not_configured`). `issuer` = `LA_PUBLIC_URL`; tek kaynak `<LA_PUBLIC_URL>/mcp`. Yalnızca yetkilendirme kodu + PKCE (`S256`); tüm istemciler herkese açık istemcidir (istemci sırrı yoktur).
+
+| Uç | |
+|---|---|
+| `GET /.well-known/oauth-protected-resource[/mcp]` | RFC 9728: `{resource, authorization_servers: [issuer], scopes_supported, bearer_methods_supported: ["header"]}` |
+| `GET /.well-known/oauth-authorization-server` | RFC 8414. `code_challenge_methods_supported: ["S256"]`, `token_endpoint_auth_methods_supported: ["none"]`, `authorization_response_iss_parameter_supported: true`, `client_id_metadata_document_supported`, `registration_endpoint` (DCR açıksa) |
+| `POST /oauth/register` | RFC 7591 (JSON). `{redirect_uris, client_name?, …}` → `201 {client_id: "oc_…", token_endpoint_auth_method: "none", …}`. Açık kayıttır; IP başına 10 dakikada 30. Hatalar: `invalid_redirect_uri`, `invalid_client_metadata` |
+| `GET/POST /oauth/authorize` | Giriş ve onay sayfaları (sunucu tarafında üretilir; İngilizce/Türkçe: `ui_locales` parametresi → `la_locale` çerezi → `Accept-Language`, varsayılan İngilizce). Parametreler: `response_type=code`, `client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method=S256`, `state?`, `scope?`, `resource?` |
+| `POST /oauth/token` | Form gövdesi. `grant_type=authorization_code` (`code`, `client_id`, `code_verifier`, `redirect_uri?`, `resource?`) ve `grant_type=refresh_token` (`refresh_token`, `client_id`, `scope?`, `resource?`) → `{access_token, token_type: "Bearer", expires_in, refresh_token, scope}`. Hatalar RFC 6749 §5.2 (`invalid_grant`, `invalid_client`, `invalid_request`, `invalid_target`, `invalid_scope`, `unsupported_grant_type`) |
+| `POST /oauth/revoke` | RFC 7009. Yenileme token'ı → tüm grant sona erer; erişim token'ı → yalnızca o token. Her zaman `200` |
+| `GET /api/me/connected-apps` | Oturumdaki kullanıcının geçerli grant'leri: `[{id, client_id, client_name, client_kind: "dcr"\|"cimd", client_uri, redirect_hosts, scopes, created_at, last_used_at, expires_at}]` |
+| `DELETE /api/me/connected-apps/{id}` | Grant'i iptal eder (`204`); başkasının grant'i `404` |
+
+Kurallar:
+
+- **İstemci**: `oc_…` (kayıtlı) ya da bir Client ID Metadata Document'ın `https` adresi. Belge yalnızca **oturum açmış** kullanıcı için, doğrudan (vekilsiz), yalnızca genel adreslere (bağlantı anında denetlenir), yönlendirme izlemeden, 5 sn / 64 KB sınırıyla indirilir; `client_id` alanı adresle aynı olmalıdır; 1–60 dk önbelleklenir.
+- **Yönlendirme adresi**: `https` ya da loopback üzerinde `http`; kayıtlı adresle **birebir** eşleşmelidir (yalnızca loopback adreslerinde port yok sayılır, RFC 8252 §7.3). İstemci ve adresi doğrulanana kadar hatalar sayfada gösterilir, yönlendirme yapılmaz; sonrasında hatalar `error`, `state`, `iss` ile istemciye döner. Her yetkilendirme yanıtı `iss` taşır (RFC 9207).
+- **Kaynak** (RFC 8707): `resource` verilmişse `<LA_PUBLIC_URL>/mcp` (ya da kökenin kendisi) olmalıdır, değilse `invalid_target`; verilmemişse aynı kaynak varsayılır.
+- **Kapsam**: bilinmeyen kapsamlar yok sayılır; hiç kapsam istenmemişse `izlek:read`. Kullanıcı onay sayfasında `izlek:admin`'i çıkarabilir.
+- **Onay**: `la_session` oturumu gerekir; yoksa aynı sayfada giriş formu gösterilir (`POST /api/auth/login` ile aynı denetim, hız sınırı ve denetim kaydı). Formlar CSRF'e (oturuma bağlı token; giriş formunda çereze bağlı token; `Origin`/`Sec-Fetch-Site` denetimi) ve çerçevelemeye (`frame-ancestors 'none'`) karşı korunur.
+- **Süreler**: kod 2 dk ve tek kullanımlık; erişim token'ı 1 saat; yenileme token'ı her kullanımda döner (kullanılmayan 30 günde biter); grant en çok 180 gün. Kullanılmış bir kodun ya da yenileme token'ının yeniden sunulması grant'i **iptal eder**.
+- Kod ve token'lar yalnızca SHA-256 olarak saklanır (`oauth_codes`, `oauth_tokens`). Biçimler: `oac_`/`oat_`/`ort_` + 40 karakter base62.
+- Parola değişimi ve TOTP'nin açılması kullanıcının tüm grant'lerini iptal eder.
+- Hız sınırları (IP başına): token + iptal uçları dakikada 300; başarısız token isteği dakikada 30'dan sonra `429` (geçerli istekler etkilenmez).
+
+### 13.5 Denetim kaydı
+
+| `action` | `actor` | `target` | `detail` |
+|---|---|---|---|
+| `oauth.authorize` | kullanıcı | `client_id` | `{client_name, client_kind, scopes, redirect_host}` |
+| `oauth.token` | kullanıcı | `client_id` | `{client_name, client_kind, scopes, grant, grant_type: "authorization_code"\|"refresh_token"}` |
+| `oauth.revoke` | kullanıcı | `client_id` | `{…, grant, reason: "user"\|"client"\|"code_replay"\|"refresh_token_reuse"}` |
+
+Araçların yaptığı her değişiklik, UI'dan yapılan aynı değişiklikle aynı kaydı üretir (`project.create`, `token.update`, `flag.update`, …; aktör kullanıcı ya da anahtar) ve `detail.via = {mcp_tool, oauth_client?, oauth_client_id?, oauth_grant?}` alanını taşır. Okuma araçları kayıt üretmez. Kod, token ve anahtar değerleri hiçbir kayda girmez.

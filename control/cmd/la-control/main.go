@@ -117,6 +117,9 @@ func serve(cfg config.Config, log *slog.Logger, getenv func(string) string) int 
 	if cfg.InternalSecret == "" {
 		log.Warn("LA_QUERY_INTERNAL_SECRET is not set: the query proxy answers 503")
 	}
+	if cfg.PublicURLIgnored != "" {
+		log.Warn("LA_PUBLIC_URL ignored: OAuth sign-in for MCP clients is off; /mcp accepts secret keys only", "reason", cfg.PublicURLIgnored)
+	}
 	if !cfg.CookieSecure {
 		log.Warn("LA_COOKIE_SECURE=false: session cookies travel without the Secure flag; use only for local development")
 	}

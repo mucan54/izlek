@@ -38,7 +38,6 @@ type pageStrings struct {
 	Roles                       map[string]string
 	Lifetime                    string
 	Approve, Deny               string
-	Revocable                   string
 	ErrorHeading, ErrorLead     string
 	ErrForm, ErrCredentials     string
 	ErrTOTPRequired, ErrTOTP    string
@@ -70,7 +69,6 @@ var pageLocales = map[string]*pageStrings{
 		Roles:           map[string]string{"owner": "owner", "admin": "admin", "member": "member", "viewer": "viewer"},
 		Lifetime:        "It cannot close projects, delete data, manage members or change your password. Access ends after 180 days, when you change your password, or when you revoke it.",
 		Approve:         "Approve", Deny: "Deny",
-		Revocable:    "You can revoke access at any time from your izlek account settings.",
 		ErrorHeading: "This connection cannot continue",
 		ErrorLead:    "The request from the application is not valid, so izlek stopped here instead of sending you back to it. Close this page and start the connection again from the application.",
 		ErrForm:      "This page has expired. Reload it and try again.", ErrCredentials: "The e-mail address or password is not correct.",
@@ -101,7 +99,6 @@ var pageLocales = map[string]*pageStrings{
 		Roles:           map[string]string{"owner": "sahip", "admin": "yönetici", "member": "üye", "viewer": "izleyici"},
 		Lifetime:        "Proje kapatamaz, veri silemez, üyeleri yönetemez, parolanızı değiştiremez. Erişim 180 gün sonra, parolanızı değiştirdiğinizde ya da siz iptal ettiğinizde sona erer.",
 		Approve:         "Onayla", Deny: "Reddet",
-		Revocable:    "Erişimi izlek hesap ayarlarınızdan istediğiniz zaman iptal edebilirsiniz.",
 		ErrorHeading: "Bu bağlantı sürdürülemiyor",
 		ErrorLead:    "Uygulamadan gelen istek geçerli değil; izlek sizi uygulamaya geri göndermek yerine burada durdu. Bu sayfayı kapatıp bağlantıyı uygulamadan yeniden başlatın.",
 		ErrForm:      "Bu sayfanın süresi doldu. Yenileyip yeniden deneyin.", ErrCredentials: "E-posta adresi ya da parola hatalı.",
@@ -234,11 +231,15 @@ a { color: var(--accent); }
 {{if .HostMismatch}}<p class="note warn">{{.T.HostMismatch}}</p>{{end}}
 {{if .Loopback}}<p class="note warn">{{.T.LoopbackWarning}}</p>{{end}}
 {{if .Unverified}}<p class="note warn">{{.T.UnverifiedName}}</p>{{end}}
+<form method="post" action="/oauth/authorize" class="account">
+<input type="hidden" name="q" value="{{.Query}}">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<span>{{.T.SignedInAs}} <strong>{{.Email}}</strong></span>
+<button class="link" type="submit" name="action" value="logout">{{.T.NotYou}}</button>
+</form>
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="q" value="{{.Query}}">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
-<div class="account"><span>{{.T.SignedInAs}} <strong>{{.Email}}</strong></span>
-<button class="link" type="submit" name="action" value="logout" formnovalidate>{{.T.NotYou}}</button></div>
 <p>{{.T.WillBeAble}}</p>
 <ul>
 <li>{{.T.ScopeRead}}</li>
@@ -261,7 +262,7 @@ a { color: var(--accent); }
 {{end}}
 </div>
 <footer class="muted">
-<span>{{if eq .Kind "consent"}}{{.T.Revocable}}{{end}}</span>
+<span></span>
 {{if .LanguageLink}}<a href="{{.LanguageLink}}" lang="{{.T.OtherLangTag}}" hreflang="{{.T.OtherLangTag}}">{{.T.OtherLanguage}}</a>{{end}}
 </footer>
 </main>
@@ -286,7 +287,11 @@ func (s *Server) renderPage(w http.ResponseWriter, status int, data pageData, fo
 	h := w.Header()
 	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'nonce-"+data.Nonce+"'; form-action "+formAction+"; base-uri 'none'; frame-ancestors 'none'")
 	h.Set("X-Frame-Options", "DENY")
-	h.Set("Referrer-Policy", "no-referrer")
+	// same-origin, not no-referrer: with no-referrer browsers send
+	// "Origin: null" when the forms on the page are submitted, and the
+	// same-origin check of the form handler would refuse them. Nothing is
+	// sent to the client's site either way.
+	h.Set("Referrer-Policy", "same-origin")
 	h.Set("Cache-Control", "no-store")
 	h.Set("Pragma", "no-cache")
 	h.Set("Content-Type", "text/html; charset=utf-8")
