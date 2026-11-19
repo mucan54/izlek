@@ -6,7 +6,7 @@
 //   MOCK_SEED=1 node mock/server.mjs  # demo org, project, flags, insights
 //
 //   LA_CONTROL_URL=http://127.0.0.1:8090 node mock/server.mjs
-//                                   # no mock data: serve dist/ and forward /api/ to a real control plane
+//                                   # no mock data: serve dist/ and forward /api/ (and /.well-known/, /oauth/, /mcp) to a real control plane
 //
 // Environment: PORT (default 8090; 8089 in proxy mode), HOST, MOCK_SEED,
 // LA_UI_DIR (default ../dist), LA_CONTROL_URL.
@@ -342,12 +342,13 @@ export const createMockServer = (options = {}) => {
     db.grants.push(grant)
     return grant
   }
-  /** The two demo applications: Claude with change access, ChatGPT read-only and never used. */
+  /** The two demo applications: Claude (dynamically registered) with change access, ChatGPT (metadata document) read-only and never used. */
   const connectDemoApps = (userId) => [
     connectApp(userId, {
-      client_id: 'https://claude.ai/oauth/mcp-client-metadata',
+      // registered itself (RFC 7591): the name is the application's own claim
+      client_id: 'oc_' + base62(24),
       client_name: 'Claude',
-      client_kind: 'cimd',
+      client_kind: 'dcr',
       client_uri: 'https://claude.ai',
       redirect_hosts: ['claude.ai'],
       scopes: ['izlek:read', 'izlek:admin'],

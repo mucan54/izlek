@@ -828,7 +828,7 @@ const languageScenario = async (lang) => {
   await page.getByRole('link', { name: 'New flag' }).waitFor()
   await page.getByRole('link', { name: 'Project settings' }).click()
   await heading('Project settings').waitFor()
-  assert.deepEqual(await page.getByRole('tab').allInnerTexts(), ['General', 'Write tokens', 'Secret keys', 'SDK setup'])
+  assert.deepEqual(await page.getByRole('tab').allInnerTexts(), ['General', 'Write tokens', 'Secret keys', 'SDK setup', 'AI assistants'])
   await page.getByRole('tab', { name: 'SDK setup' }).click()
   await page.getByRole('tab', { name: 'Android' }).click()
   assert.match(await page.getByTestId('snippet').innerText(), /analytics-replay:0\.1\.0"\)\s+\/\/ optional/)
@@ -887,6 +887,183 @@ await step('language: switch to English on the account page, it persists across 
   }
 })
 
+await step('AI assistants: MCP address with copy, connect steps per client; notes when OAuth or the endpoint is off', async () => {
+  const endpoint = base + '/mcp'
+  const status = (state) => page.locator(`[data-testid="mcp-status"][data-state="${state}"]`)
+  const clipboard = () => page.evaluate(() => navigator.clipboard.readText())
+  try {
+    await go(`/p/${pid}/settings`)
+    await page.getByRole('tab', { name: 'Yapay zekâ asistanları' }).click()
+    await page.waitForURL(/\/settings\/mcp$/)
+    await page.getByRole('heading', { name: 'Yapay zekâ asistanları (MCP)' }).waitFor()
+
+    // the address, and the copy button next to it
+    assert.equal(await page.getByTestId('mcp-url').inputValue(), endpoint)
+    assert.equal(await page.getByLabel('MCP adresi').inputValue(), endpoint)
+    await page.getByTestId('mcp-url-copy').click()
+    assert.equal(await clipboard(), endpoint)
+
+    // OAuth is on: both Claude Code forms, exactly as docs/mcp.md gives them
+    await status('oauth').waitFor()
+    assert.match(await status('oauth').innerText(), /OAuth ile oturum açma kullanılabilir/)
+    const code = page.getByTestId('mcp-client-code')
+    const keyCommand = `claude mcp add --transport http izlek ${endpoint} \\\n  --header "Authorization: Bearer sk_…"`
+    assert.equal(await page.getByTestId('mcp-cmd-key').innerText(), keyCommand)
+    assert.equal(await page.getByTestId('mcp-cmd-oauth').innerText(), `claude mcp add --transport http izlek ${endpoint}`)
+    await code.getByRole('button', { name: 'Kopyala' }).first().click()
+    assert.equal(await clipboard(), keyCommand)
+    // the project has a secret key by now; only the placeholder is ever rendered
+    assert.ok(mock.db.keys.some((k) => k.project_id == pid))
+    assert.ok(!/sk_[0-9A-Za-z]{4,}/.test(await page.content()), 'no real secret key on the page')
+    assert.equal(await code.getByRole('link', { name: 'Gizli anahtar oluştur' }).getAttribute('href'), `/p/${pid}/settings/keys`)
+    await shot('29e-mcp')
+
+    // claude.ai / Claude Desktop and ChatGPT: numbered steps with the address, and the "not verified" caveat
+    await page.getByRole('tab', { name: 'claude.ai / Claude Desktop' }).click()
+    const claude = page.getByTestId('mcp-client-claude')
+    assert.equal(await claude.locator('ol.steps > li').count(), 5)
+    assert.match(await claude.innerText(), /Add custom connector/)
+    assert.ok((await claude.innerText()).includes(endpoint))
+    assert.match(await claude.innerText(), /Doğrulanmadı: bu adımlar Anthropic belgelerinin 2026-11-19/)
+    assert.equal(await claude.getByRole('note').count(), 0, 'no warning while OAuth is on')
+    await page.getByRole('tab', { name: 'ChatGPT' }).click()
+    const chatgpt = page.getByTestId('mcp-client-chatgpt')
+    assert.equal(await chatgpt.locator('ol.steps > li').count(), 4)
+    assert.match(await chatgpt.innerText(), /Add custom MCP server/)
+    assert.ok((await chatgpt.innerText()).includes(endpoint))
+    assert.match(await chatgpt.innerText(), /Doğrulanmadı: bu adımlar OpenAI belgelerinin 2026-11-19/)
+    await shot('29f-mcp-chatgpt')
+
+    // what an assistant can and cannot do; where to revoke
+    const tools = page.getByTestId('mcp-tools')
+    assert.equal(await tools.locator('.tool').count(), 22)
+    assert.equal(await tools.locator('.tool-write').count(), 7)
+    assert.deepEqual(await tools.getByRole('heading', { level: 3 }).allInnerTexts(), ['Kurulum', 'Flag’ler', 'Analiz', 'Neleri yapamaz?'])
+    for (const text of ['Proje kapatmak', 'Üyeleri yönetmek', 'Silme isteği oluşturmak (KVKK/GDPR)']) await tools.getByText(text, { exact: true }).waitFor()
+    await page.getByRole('heading', { name: 'Güvenlik' }).waitFor()
+    assert.equal(await page.getByRole('link', { name: 'Hesap → Bağlı uygulamalar' }).getAttribute('href'), '/account')
+    await noOverflow()
+
+    // without LA_PUBLIC_URL the metadata document is a 404: secret keys only, and the page says so
+    mock.hooks.oauth = false
+    await page.reload()
+    await status('keys').waitFor()
+    const note = await status('keys').innerText()
+    assert.match(note, /yalnızca gizli anahtarlar çalışır/)
+    assert.match(note, /LA_PUBLIC_URL ayarı \(https adresi\)/)
+    assert.match(note, /claude\.ai ve ChatGPT bağlanamaz; Claude Code gizli anahtarla bağlanabilir/)
+    assert.equal(await page.getByTestId('mcp-url').inputValue(), endpoint)
+    assert.equal(await page.getByTestId('mcp-cmd-key').innerText(), keyCommand, 'the secret-key form still applies')
+    assert.equal(await page.getByTestId('mcp-cmd-oauth').count(), 0, 'the OAuth form is not offered')
+    await page.getByTestId('mcp-code-oauth-off').waitFor()
+    await shot('29g-mcp-oauth-off')
+    for (const [tab, id] of [['claude.ai / Claude Desktop', 'mcp-client-claude'], ['ChatGPT', 'mcp-client-chatgpt']]) {
+      await page.getByRole('tab', { name: tab }).click()
+      assert.match(await page.getByTestId(id).getByRole('note').innerText(), /yalnızca OAuth ile bağlanır/)
+    }
+
+    // LA_MCP_ENABLED=false: the path falls through to the SPA shell (200, HTML), which must not read as "OAuth is on"
+    mock.hooks.mcp = false
+    await page.reload()
+    await status('off').waitFor()
+    assert.match(await status('off').innerText(), /LA_MCP_ENABLED=false/)
+    mock.hooks.mcp = true
+    mock.hooks.oauth = true
+
+    // the same page in English
+    await page.evaluate(() => localStorage.setItem('la_locale', 'en'))
+    await page.reload()
+    await page.getByRole('heading', { name: 'AI assistants (MCP)' }).waitFor()
+    assert.equal(await page.getByRole('tab', { name: 'AI assistants' }).getAttribute('aria-selected'), 'true')
+    await status('oauth').waitFor()
+    assert.equal(await page.getByLabel('MCP endpoint').inputValue(), endpoint)
+    assert.deepEqual(await page.getByTestId('mcp-tools').getByRole('heading', { level: 3 }).allInnerTexts(), ['Setup', 'Feature flags', 'Analytics', 'What it cannot do'])
+    await page.getByRole('link', { name: 'Create a secret key' }).waitFor()
+    await page.getByRole('link', { name: 'Account → Connected apps' }).waitFor()
+    await shot('29h-mcp-en')
+  } finally {
+    mock.hooks.mcp = true
+    mock.hooks.oauth = true
+    await page.evaluate(() => localStorage.setItem('la_locale', 'tr')).catch(() => {})
+  }
+})
+
+await step('connected apps: listed with their access in plain words, revoked through the confirm dialog; quiet when the server has none', async () => {
+  const owner = mock.db.users.find((u) => u.email == OWNER.email)
+  const other = mock.db.users.find((u) => u.email == VIEWER.email)
+  const [claude, chatgpt] = mock.connectDemoApps(owner.id)
+  const foreign = mock.connectApp(other.id, { client_id: 'oc_' + 'x'.repeat(24), client_name: 'Başkasının uygulaması', client_kind: 'dcr', redirect_hosts: ['localhost'] })
+  const mine = () => mock.db.grants.filter((g) => g.user_id == owner.id).map((g) => g.id)
+  try {
+    await go('/account')
+    await page.getByRole('heading', { name: 'Bağlı uygulamalar' }).waitFor()
+    const list = page.getByTestId('connected-apps')
+    const rows = list.locator('tbody tr')
+    await rows.nth(1).waitFor()
+    assert.equal(await rows.count(), 2, 'only this user’s applications')
+    assert.equal(await list.getAttribute('data-count'), '2')
+    const claudeRow = list.locator(`tr[data-app-id="${claude.id}"]`)
+    const chatgptRow = list.locator(`tr[data-app-id="${chatgpt.id}"]`)
+    assert.match(
+      await claudeRow.innerText(),
+      /Claude[\s\S]*Ad doğrulanmadı[\s\S]*claude\.ai[\s\S]*Okuma ve değişiklik[\s\S]*Projeleri görebilir ve sorgu çalıştırabilir\.[\s\S]*Ayrıca proje, token, anahtar ve flag oluşturabilir ve değiştirebilir\.[\s\S]*2 sa önce/,
+    )
+    const readOnly = await chatgptRow.innerText()
+    assert.match(readOnly, /ChatGPT[\s\S]*Bilgileri chatgpt\.com adresinden okundu[\s\S]*chatgpt\.com[\s\S]*Salt okunur[\s\S]*Projeleri görebilir ve sorgu çalıştırabilir\.[\s\S]*Hiç kullanılmadı/)
+    assert.ok(!readOnly.includes('Ayrıca proje'), 'a read-only grant does not claim change access')
+    await list.getByText('Parolanızı değiştirmek ya da iki adımlı doğrulamayı açmak, bağlı uygulamaların tümünün erişimini iptal eder.').waitFor()
+    await shot('29i-connected-apps')
+    await noOverflow()
+
+    // revoke asks first; cancelling changes nothing
+    await chatgptRow.getByRole('button', { name: 'Erişimi iptal et' }).click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByRole('heading', { name: 'Erişim iptal edilsin mi?' }).waitFor()
+    await dialog.getByText('“ChatGPT” erişimini hemen kaybeder.').waitFor()
+    await dialog.getByRole('button', { name: 'Vazgeç' }).click()
+    assert.equal(await page.getByRole('dialog').count(), 0)
+    assert.deepEqual(mine(), [claude.id, chatgpt.id])
+
+    // confirming sends the DELETE with the CSRF header; the row disappears
+    await chatgptRow.getByRole('button', { name: 'Erişimi iptal et' }).click()
+    const deleted = page.waitForResponse((r) => r.request().method() == 'DELETE' && new URL(r.url()).pathname == `/api/me/connected-apps/${chatgpt.id}`)
+    await page.getByRole('dialog').getByRole('button', { name: 'Erişimi iptal et' }).click()
+    const response = await deleted
+    assert.equal(response.status(), 204)
+    assert.ok(response.request().headers()['x-la-csrf'], 'revoking carries the CSRF header')
+    await page.getByText('ChatGPT erişimi iptal edildi.').waitFor()
+    await chatgptRow.waitFor({ state: 'detached' })
+    assert.equal(await rows.count(), 1)
+    await claudeRow.waitFor()
+    assert.deepEqual(mine(), [claude.id])
+    assert.ok(mock.db.grants.some((g) => g.id == foreign.id), 'other users’ grants are untouched')
+    assert.ok(mock.db.audit.some((a) => a.action == 'oauth.revoke' && a.target == 'ChatGPT'))
+    await toastGone()
+
+    // nothing left: the empty state explains the list and points to the AI assistants page
+    await claudeRow.getByRole('button', { name: 'Erişimi iptal et' }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Erişimi iptal et' }).click()
+    await list.getByText('Bağlı uygulama yok').waitFor()
+    assert.deepEqual(mine(), [])
+    await list.getByText('OAuth ile bağladığınız uygulamalar burada listelenir').waitFor()
+    await toastGone()
+    await list.getByRole('link', { name: 'Yapay zekâ asistanı nasıl bağlanır?' }).click()
+    await page.waitForURL(new RegExp(`/p/${pid}/settings/mcp$`))
+    await page.getByTestId('mcp-url').waitFor()
+
+    // a server without the endpoint answers 404: one quiet line, no error banner
+    mock.hooks.mcp = false
+    await go('/account')
+    await page.getByTestId('connected-apps-off').waitFor()
+    assert.equal(await page.getByTestId('connected-apps-off').innerText(), 'Bu sunucuda uygulama bağlama etkin değil.')
+    assert.equal(await page.getByRole('alert').count(), 0)
+    assert.equal(await page.getByTestId('connected-apps').locator('table').count(), 0)
+  } finally {
+    mock.hooks.mcp = true
+    mock.db.grants = mock.db.grants.filter((g) => g.id != foreign.id && g.user_id != owner.id)
+  }
+})
+
 await step('an expired session sends the user to the login form and back to the same page', async () => {
   await go(`/p/${pid}/flags`)
   await page.locator('tr', { hasText: 'new_checkout' }).waitFor()
@@ -941,6 +1118,12 @@ await step('viewer: reads everything, sees no admin or write actions, and the AP
   assert.equal(await page.getByRole('button', { name: 'Yeni token' }).count(), 0)
   assert.equal(await page.getByRole('button', { name: 'Düzenle' }).count(), 0)
   await shot('31-viewer-tokens')
+  // the AI assistants page is readable; creating a secret key stays an admin's job
+  await page.getByRole('tab', { name: 'Yapay zekâ asistanları' }).click()
+  assert.equal(await page.getByTestId('mcp-url').inputValue(), base + '/mcp')
+  await page.getByTestId('mcp-cmd-key').waitFor()
+  assert.equal(await page.getByRole('link', { name: 'Gizli anahtar oluştur' }).count(), 0)
+  await page.getByText('Gizli anahtarı yalnızca projenin yöneticisi oluşturabilir (Proje ayarları → Gizli anahtarlar).').waitFor()
 
   // typing an admin URL does not help
   await go(`/p/${pid}/deletions`)

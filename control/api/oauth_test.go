@@ -14,6 +14,8 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -372,6 +374,18 @@ func TestOAuthIsOffWithoutAPublicURL(t *testing.T) {
 	off.raw("POST", "/mcp", map[string]string{"Content-Type": "application/json"}, `{}`).wantError(404, "not_found")
 	off.raw("GET", "/.well-known/oauth-authorization-server", nil, "").wantError(404, "not_found")
 	off.raw("GET", "/oauth/authorize", nil, "").wantError(404, "not_found")
+
+	// … also when the web app is served: its catch-all must not answer these
+	// protocol paths with the HTML shell (a client would read 200 as "present").
+	ui := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ui, "index.html"), []byte("<!doctype html><title>app</title>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	offUI := newEnv(t, func(c *config.Config) { c.MCPEnabled = false; c.UIDir = ui })
+	offUI.raw("GET", "/p/1/settings/mcp", nil, "").want(200) // an app route still gets the shell
+	for _, p := range []string{"/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource/mcp", "/oauth/authorize", "/mcp"} {
+		offUI.raw("GET", p, nil, "").wantError(404, "not_found")
+	}
 }
 
 // ---- registration ----

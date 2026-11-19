@@ -1693,6 +1693,58 @@ legend {
   top: var(--sp-3);
   right: var(--sp-3);
 }
+/* one-line commands: wrap instead of scrolling, and keep clear of the copy button */
+.snippet-cmd pre {
+  padding: var(--sp-4) 104px var(--sp-4) var(--sp-5);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- AI assistants (MCP), connected apps ---- */
+
+.prose {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  max-width: 78ch;
+}
+.steps,
+.bullets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding-left: 1.5em;
+  max-width: 78ch;
+}
+.steps {
+  list-style: decimal;
+}
+.bullets {
+  list-style: disc;
+}
+.tool-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-3);
+}
+.tool {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.tool-write {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.app-access {
+  min-width: 220px;
+  max-width: 420px;
+}
+
 .ids-cell {
   max-width: 360px;
   overflow-wrap: anywhere;

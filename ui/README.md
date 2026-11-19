@@ -36,14 +36,14 @@ npm run test:e2e     # Playwright + Chromium, süreç içi mock sunucuya karşı
 E2E_SHOTS=/tmp/izlek-shots npm run test:e2e   # ana ekranların açık/koyu ekran görüntülerini de yazar
 ```
 
-- Birim testleri: API istemcisi (CSRF, 401, hata eşleme), göreli tarih aralıkları, filtre ifadesi modeli ↔ JSON, flag formu doğrulaması, LAR1 çözücü (`spec/vectors/replay.json`), oynatıcı durum makinesi, grafik ölçek/işaret yardımcıları, sorgu gövdesi üretimi, dashboard yerleşimi, rol tablosu, dil modülleri (`tr` ve `en` aynı anahtar/tür yapısında mı, fonksiyonlar aynı argümanlarla metin döndürüyor mu, İngilizce çoğullar, dil seçimi ve `la_locale`). Ayrıca mock'un flag değerlendirmesi `spec/vectors/flags.json` ve `murmur3.json` ile, LAR1 kodlayıcısı `replay.json` ile sınanır.
-- Uçtan uca: kurulum → giriş → proje → token ve gizli anahtar → trend/huni/tutundurma/SQL insight → dashboard → flag (varyantlar, önizleme, geçmiş) → event akışı → kişi → oturum kaydı oynatma → silme isteği → üyeler/denetim kaydı → parola/TOTP → dil değiştirme (İngilizce'ye geçiş, yeniden yüklemede kalıcılık, Türkçe'ye dönüş) → oturum düşmesi → izleyici rolü → tablet genişliği → klavye → güvenlik başlıkları.
+- Birim testleri: API istemcisi (CSRF, 401, hata eşleme), göreli tarih aralıkları, filtre ifadesi modeli ↔ JSON, flag formu doğrulaması, LAR1 çözücü (`spec/vectors/replay.json`), oynatıcı durum makinesi, grafik ölçek/işaret yardımcıları, sorgu gövdesi üretimi, dashboard yerleşimi, rol tablosu, dil modülleri (`tr` ve `en` aynı anahtar/tür yapısında mı, fonksiyonlar aynı argümanlarla metin döndürüyor mu, İngilizce çoğullar, dil seçimi ve `la_locale`), MCP yardımcıları (OAuth üstverisinin yorumlanması, adres, Claude Code komutları, kapsam özeti; araç listesi ve komutlar `docs/mcp.md` ile karşılaştırılır). Ayrıca mock'un flag değerlendirmesi `spec/vectors/flags.json` ve `murmur3.json` ile, LAR1 kodlayıcısı `replay.json` ile sınanır.
+- Uçtan uca: kurulum → giriş → proje → token ve gizli anahtar → trend/huni/tutundurma/SQL insight → dashboard → flag (varyantlar, önizleme, geçmiş) → event akışı → kişi → oturum kaydı oynatma → silme isteği → üyeler/denetim kaydı → parola/TOTP → dil değiştirme (İngilizce'ye geçiş, yeniden yüklemede kalıcılık, Türkçe'ye dönüş) → yapay zekâ asistanları sayfası (adres ve kopyalama, OAuth açık/kapalı, MCP kapalı) → bağlı uygulamalar (listeleme, onaylı iptal, boş durum, 404) → oturum düşmesi → izleyici rolü → tablet genişliği → klavye → güvenlik başlıkları.
 - Uçtan uca senaryo Türkçe metinleri doğrular. Arayüz dilini tarayıcıdan seçtiği ve Playwright'ın varsayılan dili `en-US` olduğu için test bağlamı açıkça `locale: 'tr-TR'` ile açılır; dil adımı arayüzden İngilizce'ye geçip geri döner.
 - Playwright paket bağımlılığı değildir; ortamda kurulu olması beklenir (`require('playwright')`).
 
 ## Diller
 
-Arayüz Türkçe (`tr`) ve İngilizce (`en`) gelir. İki dil de aynı JS paketindedir; dil değiştirmek ağ isteği yapmaz (İngilizce pakete yaklaşık 7,7 KB gzip ekler; JS toplamı ~63,3 KB gzip).
+Arayüz Türkçe (`tr`) ve İngilizce (`en`) gelir. İki dil de aynı JS paketindedir; dil değiştirmek ağ isteği yapmaz (İngilizce pakete yaklaşık 7,7 KB gzip ekler).
 
 - **Seçim** açılışta, ilk çizimden önce yapılır (`main.tsx` → `detectLocale()`): `localStorage['la_locale']` değeri `tr` ya da `en` ise o dil; değilse tarayıcı dili (`navigator.language`) `tr` ile başlıyorsa Türkçe, diğer her durumda İngilizce. Depolamaya erişilemiyorsa (gizli mod vb.) tarayıcı diline bakılır.
 - **Değiştirme**: giriş/kurulum ekranının altındaki ve Hesap sayfasındaki (“Tercihler” kartı) “Dil” / “Language” seçim kutusu. Seçim `la_locale` anahtarına yazılır ve sayfa yeniden yüklenmeden uygulanır: `App`, ekranları dil koduyla anahtarlanmış bir `Fragment` içinde çizer, dil değişince ekranlar yeni dilde baştan kurulur. Oturum ve API istemcisi korunur; ekranların kendi durumu (ör. yarım kalmış bir form) sıfırlanır. Tercih tarayıcıya özeldir, sunucuda saklanmaz.
@@ -57,6 +57,20 @@ Yeni bir dil eklemek için:
 2. `src/i18n/index.ts` içindeki `LOCALES` tablosuna kaydedin: `xx: { strings: xx, intl: 'xx-XX', name: '<dilin kendi dilindeki adı>' }`. Seçim kutusu ve `la_locale` denetimi bu tablodan beslenir.
 3. Tarayıcı diline göre kendiliğinden seçilmesini istiyorsanız kuralı `pickLocale`'e ekleyin (şu an: `tr*` → Türkçe, diğerleri → İngilizce).
 4. `test/unit/i18n.test.ts` içindeki yapı karşılaştırmasına yeni modülü ekleyin.
+
+## Yapay zekâ asistanları (MCP) ve bağlı uygulamalar
+
+Control plane'in uzak MCP sunucusu (`docs/mcp.md`) için arayüzde iki yer vardır. Metinlerin tamamı dil modüllerinde (`mcp`, `apps`) durur; adımlar ve uyarılar `docs/mcp.md`'den alınmıştır ("doğrulanmadı" notları dahil).
+
+- **Proje ayarları → “Yapay zekâ asistanları” sekmesi** (`/p/<pid>/settings/mcp`, her rol okuyabilir): MCP adresi ve kopyalama düğmesi, Claude Code / claude.ai–Claude Desktop / ChatGPT için bağlantı adımları, asistanın yapabildikleri (araçlar `docs/mcp.md`'deki gibi üç grupta; değişiklik yapanlar ✎ ile işaretli) ve yapamadıkları, güvenlik notları.
+  - OAuth'un açık olup olmadığı `GET /.well-known/oauth-authorization-server` ile anlaşılır (`lib/mcp.ts`): `issuer` içeren JSON → OAuth açık; `404` → yalnızca gizli anahtarlar (`LA_PUBLIC_URL` ayarlanmamış); `200` ama JSON değil (yol SPA kabuğuna düşmüş) → MCP kapalı (`LA_MCP_ENABLED=false`) ya da sunucu eski. Yalnızca durum koduna bakılmaz.
+  - Gösterilen adres `location.origin + '/mcp'`'dir. Sunucunun `issuer`'ı (yani `LA_PUBLIC_URL`) sayfanın açıldığı adresten farklıysa onun `/mcp`'si gösterilir ve nedeni yazılır: OAuth belirteçleri tam olarak `<LA_PUBLIC_URL>/mcp` için geçerlidir.
+  - Komutlarda gizli anahtar yerine her zaman `sk_…` yer tutucusu yazılır; “Gizli anahtar oluştur” bağlantısı, o sekmeyi görebilen rollere (yönetici) gösterilir.
+- **Hesap → “Bağlı uygulamalar” kartı**: `GET /api/me/connected-apps` (çıplak dizi) ile OAuth izinleri listelenir; kapsamlar düz sözle gösterilir (`izlek:read` → salt okunur, `izlek:admin` → okuma ve değişiklik). “Erişimi iptal et” onay penceresinden sonra `DELETE /api/me/connected-apps/{id}` çağırır. Liste ucu `404` dönerse hata yerine tek satırlık “etkin değil” notu çıkar. Parola değişince ya da iki adımlı doğrulama açılınca (sunucu tüm izinleri iptal eder) liste yeniden okunur.
+
+Mock (`mock/server.mjs`) bu iki ucu ve üstveri belgesini sunar; `MOCK_SEED=1` ile demo kullanıcısına iki uygulama (Claude: okuma ve değişiklik, ChatGPT: salt okunur) bağlanır. Testler için: `mock.hooks.oauth = false` (üstveri `404`), `mock.hooks.mcp = false` (üstveri yolu SPA kabuğuna düşer, bağlı uygulama uçları `404`), `mock.connectDemoApps(userId)` / `mock.connectApp(userId, {…})`. Vekil kipinde (`LA_CONTROL_URL`) `/api/` ile birlikte `/.well-known/`, `/oauth/` ve `/mcp` de gerçek servise iletilir.
+
+Dışarıdan Playwright ile seçiciler: `[data-testid="mcp-url"]` (adres alanı), `mcp-url-copy`, `mcp-status` (`data-state`: `checking | oauth | keys | off | unknown`), `mcp-cmd-key`, `mcp-cmd-oauth`, `mcp-client-code | -claude | -chatgpt`, `mcp-tools`; `[data-testid="connected-apps"]` (`data-count`, satırlar `tr[data-app-id]`), `connected-apps-off`.
 
 ## Yapı
 
@@ -76,8 +90,10 @@ src/
     layout.ts              dashboard ızgarası (12 sütun) yerleşimi
     chart.ts, format.ts    eksen/ölçek yardımcıları; sayı, tarih, süre biçimleri
     roles.ts, router.tsx, hooks.ts, session.ts, snippets.ts
+    mcp.ts                 MCP sayfası için saf yardımcılar: OAuth üstverisi → durum, adres, komutlar, araç listesi, kapsam özeti
   components/              ui.tsx (düğme, alan, modal, sekme…), FilterEditor, DateRange, charts (SVG), results
-  screens/                 Auth, Projects, Events, Insights, Dashboards, Persons, Replay, Flags, Settings, Deletions, Members
+  screens/                 Auth, Projects, Events, Insights, Dashboards, Persons, Replay, Flags, Settings, Deletions, Members,
+                           Mcp (yapay zekâ asistanları sekmesi + bağlı uygulamalar kartı)
   replay/
     lar1.ts                LAR1 çözücü: ../sdk-web/src/replay-decode.ts yeniden dışa aktarılır (tek kaynak)
     fetch.ts               parça indirme + gzip/zstd açma

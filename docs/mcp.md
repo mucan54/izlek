@@ -189,7 +189,7 @@ Details:
   DELETE /api/me/connected-apps/{id}     → 204
   ```
 
-  (Session cookie; `DELETE` needs the `X-LA-CSRF` header like every other change. A page for this in the web UI is planned; until then use the API, for example from the browser console of the signed-in UI.) Revoking ends the access and refresh tokens of that grant immediately.
+  (Session cookie; `DELETE` needs the `X-LA-CSRF` header like every other change. In the web UI the same list, with a Revoke button, is under **Account → Connected apps**.) Revoking ends the access and refresh tokens of that grant immediately.
 - **Changing your password, or switching on two-step verification, revokes all your grants.**
 - An assistant can revoke its own tokens (`POST /oauth/revoke`, RFC 7009), which is what "disconnect" in a client usually does.
 - Grants end by themselves after 180 days; an unused refresh token after 30 days.
@@ -238,7 +238,7 @@ Read-only tool calls are not audited (they appear in the request log as `route: 
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `LA_MCP_ENABLED` | `true` | Serve `/mcp`, the OAuth endpoints and `/.well-known/oauth-*`. `false` removes all of them. |
+| `LA_MCP_ENABLED` | `true` | Serve `/mcp`, the OAuth endpoints and `/.well-known/oauth-*`. `false` makes all of them answer `404`. |
 | `LA_PUBLIC_URL` | empty | Public origin of the control plane (`https://host[:port]`, no path). Required for OAuth; without it `/mcp` accepts secret keys only. `http://` is accepted for `localhost` only. |
 | `LA_PUBLIC_INGEST_URL` | empty | Public address of the ingestion service, used in `get_sdk_setup` snippets. Without it the snippets contain `https://YOUR-INGEST-HOST.invalid` and say so. |
 | `LA_MCP_ALLOWED_ORIGINS` | empty | Comma-separated browser origins (besides `LA_PUBLIC_URL`) that may call `/mcp` and the OAuth endpoints from a page, e.g. a browser-based MCP inspector. They get CORS headers; nothing else does. |

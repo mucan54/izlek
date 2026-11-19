@@ -356,11 +356,12 @@ export const Badge = ({ kind = 'neutral', children }: { kind?: 'neutral' | 'ok' 
   <span class={`badge badge-${kind}`}>{children}</span>
 )
 
-export const CopyButton = ({ text, label }: { text: string; label?: string }) => {
+export const CopyButton = ({ text, label, testId }: { text: string; label?: string; testId?: string }) => {
   const [done, setDone] = useState(false)
   return (
     <Button
       small
+      data-testid={testId}
       onClick={async () => {
         try {
           await navigator.clipboard.writeText(text)

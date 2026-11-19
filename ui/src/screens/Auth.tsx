@@ -5,6 +5,7 @@ import { ApiError, type Api } from '../lib/api'
 import { useAction } from '../lib/hooks'
 import { useApp } from '../lib/session'
 import { Button, Card, ErrorNote, Field, Input, LanguageSelect, PageHead, focusOnMount, toast } from '../components/ui'
+import { ConnectedApps } from './Mcp'
 
 const MIN_PASSWORD = 10
 
@@ -112,7 +113,8 @@ export const Login = ({ api, onDone }: { api: Api; onDone: () => void }) => {
   )
 }
 
-const PasswordCard = () => {
+/** `onChanged`: the server revokes every connected app when the password changes or two-step verification is switched on. */
+const PasswordCard = ({ onChanged }: { onChanged: () => void }) => {
   const { api } = useApp()
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
@@ -124,6 +126,7 @@ const PasswordCard = () => {
     setNext('')
     setAgain('')
     toast(S.account.passwordChanged)
+    onChanged()
   })
   return (
     <Card title={S.account.passwordTitle}>
@@ -152,7 +155,7 @@ const PasswordCard = () => {
   )
 }
 
-const TotpCard = () => {
+const TotpCard = ({ onEnabled }: { onEnabled: () => void }) => {
   const { api, me, refresh } = useApp()
   const [pending, setPending] = useState<{ secret: string; otpauth_url: string } | null>(null)
   const [code, setCode] = useState('')
@@ -164,6 +167,7 @@ const TotpCard = () => {
     setCode('')
     await refresh()
     toast(S.account.totpEnabled)
+    onEnabled()
   })
   const disable = useAction(async () => {
     await api.post('/api/me/totp/disable', { password }, { credentialCheck: true })
@@ -235,6 +239,8 @@ const TotpCard = () => {
 
 export const Account = () => {
   const { me } = useApp()
+  const [credentialStamp, setCredentialStamp] = useState(0)
+  const credentialsChanged = () => setCredentialStamp((n) => n + 1)
   return (
     <>
       <PageHead title={S.account.title} sub={me.user.email} />
@@ -264,8 +270,9 @@ export const Account = () => {
             </Field>
           </div>
         </Card>
-        <PasswordCard />
-        <TotpCard />
+        <PasswordCard onChanged={credentialsChanged} />
+        <TotpCard onEnabled={credentialsChanged} />
+        <ConnectedApps stamp={credentialStamp} />
       </div>
     </>
   )

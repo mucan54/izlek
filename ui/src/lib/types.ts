@@ -68,6 +68,24 @@ export interface Key {
   secret?: string
 }
 
+/** An application the user approved on the OAuth consent page (docs/mcp.md, "Revoking access"). */
+export interface ConnectedApp {
+  id: string | number
+  client_id: string
+  /** chosen by the application; may be empty */
+  client_name: string
+  /** `dcr`: registered itself, the name is unverified; `cimd`: described by a metadata document at `client_id` */
+  client_kind: string
+  client_uri: string
+  /** where the access is sent: hosts of the redirect URIs */
+  redirect_hosts: string[]
+  /** `izlek:read`, `izlek:admin` */
+  scopes: string[]
+  created_at: number
+  last_used_at: number | null
+  expires_at: number
+}
+
 // ---- expressions (query filters and flag conditions share the grammar) ----
 
 export type Expr = { and: Expr[] } | { or: Expr[] } | { not: Expr } | { prop: string; op: string; value?: unknown }

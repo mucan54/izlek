@@ -111,7 +111,7 @@ try {
   const CONTROL = `http://127.0.0.1:${pControl}`
   const OWNER = { email: 'demo@example.com', password: 'demo-password-1' }
   const storeEnv = { LA_STORE_URL: 'file://' + join(WORK, 'store') }
-  const controlEnv = { ...storeEnv, LA_CONTROL_DB: join(WORK, 'control.db'), LA_CONTROL_LISTEN: `127.0.0.1:${pControl}`, LA_QUERY_URL: QUERY_URL, LA_QUERY_INTERNAL_SECRET: 'demo-internal-secret', LA_UI_DIR: join(ROOT, 'ui/dist'), LA_COOKIE_SECURE: 'false', LA_CONTROL_PUBLISH_DEBOUNCE_MS: '100' }
+  const controlEnv = { ...storeEnv, LA_CONTROL_DB: join(WORK, 'control.db'), LA_CONTROL_LISTEN: `127.0.0.1:${pControl}`, LA_QUERY_URL: QUERY_URL, LA_QUERY_INTERNAL_SECRET: 'demo-internal-secret', LA_UI_DIR: join(ROOT, 'ui/dist'), LA_COOKIE_SECURE: 'false', LA_CONTROL_PUBLISH_DEBOUNCE_MS: '100', LA_PUBLIC_URL: CONTROL, LA_PUBLIC_INGEST_URL: INGEST }
 
   const b = run(join(BIN, 'la-control'), ['bootstrap', '--email', OWNER.email, '--password', OWNER.password, '--org', 'Acme Inc.', '--project', 'Demo shop', '--json'], controlEnv)
   assert.equal(b.status, 0, b.stderr)
@@ -297,6 +297,7 @@ try {
     ['flags', 'flags'],
     ['flag-editor', 'flags/new_checkout'],
     ['sdk-setup', 'settings/sdk'],
+    ['mcp', 'settings/mcp'],
   ]
 
   if (SHOTS) {
@@ -316,6 +317,7 @@ try {
       await page.goto(url(path))
       await page.waitForSelector('.main h1')
       await page.waitForLoadState('networkidle')
+      if (name == 'mcp') await page.locator('[data-testid="mcp-status"][data-state="oauth"]').waitFor()
       if (name == 'replay') {
         await page.locator('canvas.replay-canvas').waitFor()
         await page.locator('.replay-play').click()
@@ -325,6 +327,21 @@ try {
       await page.waitForTimeout(500)
       await page.screenshot({ path: join(SHOTS, `${name}.png`) })
       console.log(`  ${name}.png`)
+    }
+    // The consent page an assistant's user sees when connecting over OAuth: register a client the
+    // way claude.ai does (dynamic registration grants nothing by itself) and open the authorization request.
+    {
+      const reg = await context.request.post(`${CONTROL}/oauth/register`, { data: { client_name: 'Claude', redirect_uris: ['https://claude.ai/api/mcp/auth_callback'], token_endpoint_auth_method: 'none' } })
+      assert.equal(reg.status(), 201, await reg.text())
+      const { client_id } = await reg.json()
+      const { createHash, randomBytes } = await import('node:crypto')
+      const challenge = createHash('sha256').update(randomBytes(32).toString('base64url')).digest('base64url')
+      const q = new URLSearchParams({ response_type: 'code', client_id, redirect_uri: 'https://claude.ai/api/mcp/auth_callback', code_challenge: challenge, code_challenge_method: 'S256', scope: 'izlek:read izlek:admin', state: 'demo', resource: `${CONTROL}/mcp`, ui_locales: LANG })
+      await page.setViewportSize({ width: 1100, height: 820 })
+      await page.goto(`${CONTROL}/oauth/authorize?${q}`)
+      await page.waitForLoadState('networkidle')
+      await page.screenshot({ path: join(SHOTS, 'mcp-consent.png') })
+      console.log('  mcp-consent.png')
     }
     assert.deepEqual(errors, [], 'no page errors while taking screenshots')
     await context.close()

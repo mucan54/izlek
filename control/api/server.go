@@ -422,6 +422,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// The sign-in and consent pages replace this policy with their own.
 		s.securityHeaders(sw.Header(), cspAPI)
 		s.serveOAuth(sw, r, info)
+	case path == "/mcp" || path == "/mcp/" || path == "/oauth" ||
+		strings.HasPrefix(path, "/oauth/") || strings.HasPrefix(path, "/.well-known/"):
+		// MCP is switched off: these are protocol paths, not pages. Without
+		// this they would fall through to the single-page app and answer 200
+		// with HTML, which clients probing for metadata read as "present".
+		info.route = "disabled"
+		s.securityHeaders(sw.Header(), cspAPI)
+		writeError(sw, errNotFound())
 	default:
 		info.route, info.quiet = "static", true
 		if s.ui == nil {

@@ -1,4 +1,4 @@
-// Project settings: general, write tokens, secret keys, SDK snippets.
+// Project settings: general, write tokens, secret keys, SDK snippets, AI assistants (./Mcp).
 import { useEffect, useState } from 'preact/hooks'
 import { S } from '../i18n'
 import { asList } from '../lib/api'
@@ -10,8 +10,9 @@ import { useApp, useProject } from '../lib/session'
 import { android, ios, webNpm, webScript } from '../lib/snippets'
 import type { Key, KeyScope, Project, Token } from '../lib/types'
 import { AsyncView, Badge, Button, Card, Checkbox, ConfirmButton, CopyButton, Empty, ErrorNote, Field, Input, Modal, PageHead, Select, Switch, Tabs, toast } from '../components/ui'
+import { AiAssistants } from './Mcp'
 
-type Tab = 'general' | 'tokens' | 'keys' | 'sdk'
+type Tab = 'general' | 'tokens' | 'keys' | 'sdk' | 'mcp'
 
 const lines = (text: string): string[] => [...new Set(text.split(/[\n,]/).map((s) => s.trim()).filter(Boolean))]
 
@@ -483,6 +484,7 @@ export const Settings = ({ tab }: { tab: string }) => {
     ['tokens', S.tokens.title],
     ...(admin ? [['keys', S.keys.title] as const] : []),
     ['sdk', S.sdk.title],
+    ['mcp', S.mcp.tab],
   ]
   const current = (tabs.some(([t]) => t == tab) ? tab : 'general') as Tab
   return (
@@ -493,6 +495,7 @@ export const Settings = ({ tab }: { tab: string }) => {
       {current == 'tokens' && <Tokens />}
       {current == 'keys' && <Keys />}
       {current == 'sdk' && <Sdk />}
+      {current == 'mcp' && <AiAssistants />}
     </>
   )
 }

@@ -475,7 +475,11 @@ claude mcp add --transport http izlek https://analytics.example.com/mcp \
 claude mcp add --transport http izlek https://analytics.example.com/mcp
 ```
 
+![The AI assistants page in project settings with the MCP endpoint and connection commands](docs/images/mcp.png)
+
 In **claude.ai / Claude Desktop** and **ChatGPT**, add a custom connector with the URL `https://analytics.example.com/mcp` and choose OAuth; you sign in to izlek and approve the request on a consent page (English or Turkish). Step-by-step instructions for each client: [`docs/mcp.md`](docs/mcp.md).
+
+![Consent page shown when an assistant asks for access](docs/images/mcp-consent.png)
 
 | Group | Tools |
 |---|---|
@@ -489,7 +493,7 @@ How it is built:
 - **Same rules as the web UI.** Tools run the existing API handlers in-process, so validation, role checks and the audit log are shared; mutating calls are recorded with the assistant that made them.
 - **Deliberately not exposed:** closing projects, deleting tokens, keys or flags, member management and deletion requests.
 - **Protocol revisions.** One stateless endpoint (`POST /mcp`, JSON responses) serves both the handshake-based revisions (2025-03-26 to 2025-11-25) and the handshake-free 2026-07-28 revision.
-- OAuth needs `LA_PUBLIC_URL` (the control plane's public `https://` origin); without it `/mcp` accepts secret keys only. Connected apps can be listed and revoked per user; changing your password revokes them all.
+- OAuth needs `LA_PUBLIC_URL` (the control plane's public `https://` origin); without it `/mcp` accepts secret keys only. *Project settings → AI assistants* shows the endpoint and the steps for each client; *Account → Connected apps* lists what you have authorised and revokes it. Changing your password revokes them all.
 
 CI runs conformance tests with the official MCP client libraries (both protocol styles, the complete OAuth flow, and the consent page in Chromium), and the end-to-end suite drives the tools against the real query service. **It has not been tried against the hosted claude.ai or ChatGPT services**; their requirements were taken from their documentation.
 
