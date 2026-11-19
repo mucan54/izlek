@@ -61,8 +61,13 @@ export const createMockServer = (options = {}) => {
   const uiDir = options.uiDir ?? process.env.LA_UI_DIR ?? path.join(here, '../dist')
   const dataset = buildDataset(now())
   const engine = createEngine(dataset, now)
-  /** Switches tests can flip at runtime. */
-  const hooks = { rawReplay: false }
+  /**
+   * Switches tests can flip at runtime.
+   * - `mcp: false` — as with LA_MCP_ENABLED=false (or a control plane that predates the MCP server):
+   *   /.well-known/* falls through to the SPA shell and the connected-apps endpoints answer 404.
+   * - `oauth: false` — as without LA_PUBLIC_URL: the metadata document answers 404, only secret keys work.
+   */
+  const hooks = { rawReplay: false, mcp: true, oauth: true }
 
   const db = {
     users: [], // { id, email, password, totp_secret, totp_pending, totp_enabled }
@@ -78,6 +83,7 @@ export const createMockServer = (options = {}) => {
     dashboards: [],
     deletions: [],
     audit: [],
+    grants: [], // OAuth grants (docs/mcp.md): ConnectedApp + user_id
     sessions: new Map(), // sha256(cookie) → { user_id, csrf, expires }
     loginFailures: new Map(), // email → [ts…]
     seq: 1,
@@ -283,6 +289,7 @@ export const createMockServer = (options = {}) => {
     checkPassword(ctx.body.new)
     ctx.user.password = hashPassword(ctx.body.new)
     audit(ctx.user.id, 'user.password', ctx.user.id)
+    revokeAllGrants(ctx.user.id)
     return { ok: true }
   })
   route('POST', '/api/me/totp/begin', (ctx) => {
@@ -298,6 +305,7 @@ export const createMockServer = (options = {}) => {
     ctx.user.totp_pending = null
     ctx.user.totp_enabled = true
     audit(ctx.user.id, 'user.totp_enable', ctx.user.id)
+    revokeAllGrants(ctx.user.id)
     return { ok: true }
   })
   route('POST', '/api/me/totp/disable', (ctx) => {
@@ -306,6 +314,68 @@ export const createMockServer = (options = {}) => {
     ctx.user.totp_enabled = false
     audit(ctx.user.id, 'user.totp_disable', ctx.user.id)
     return { ok: true }
+  })
+
+  // -- applications the user connected through OAuth (docs/mcp.md, "Revoking access") --
+  const GRANT_DAYS = 180
+  const grantView = ({ user_id: _user, ...app }) => app
+  /** Changing the password or switching on two-step verification ends every grant of the user. */
+  const revokeAllGrants = (userId) => {
+    for (const g of db.grants.filter((x) => x.user_id == userId)) audit(userId, 'oauth.revoke', g.client_name, { oauth_grant: g.id, reason: 'credentials_changed' })
+    db.grants = db.grants.filter((g) => g.user_id != userId)
+  }
+  /** Adds a grant as if `userId` had approved the application on the consent page. */
+  const connectApp = (userId, app) => {
+    const grant = {
+      user_id: userId,
+      id: nextId(),
+      client_id: app.client_id,
+      client_name: app.client_name ?? '',
+      client_kind: app.client_kind ?? 'cimd',
+      client_uri: app.client_uri ?? '',
+      redirect_hosts: app.redirect_hosts ?? [],
+      scopes: app.scopes ?? ['izlek:read'],
+      created_at: app.created_at ?? now(),
+      last_used_at: app.last_used_at ?? null,
+      expires_at: app.expires_at ?? (app.created_at ?? now()) + GRANT_DAYS * 86_400_000,
+    }
+    db.grants.push(grant)
+    return grant
+  }
+  /** The two demo applications: Claude with change access, ChatGPT read-only and never used. */
+  const connectDemoApps = (userId) => [
+    connectApp(userId, {
+      client_id: 'https://claude.ai/oauth/mcp-client-metadata',
+      client_name: 'Claude',
+      client_kind: 'cimd',
+      client_uri: 'https://claude.ai',
+      redirect_hosts: ['claude.ai'],
+      scopes: ['izlek:read', 'izlek:admin'],
+      created_at: now() - 21 * 86_400_000,
+      last_used_at: now() - 2 * 3_600_000,
+    }),
+    connectApp(userId, {
+      client_id: 'https://chatgpt.com/oauth/client.json',
+      client_name: 'ChatGPT',
+      client_kind: 'cimd',
+      client_uri: 'https://chatgpt.com',
+      redirect_hosts: ['chatgpt.com'],
+      scopes: ['izlek:read'],
+      created_at: now() - 3 * 86_400_000,
+    }),
+  ]
+  route('GET', '/api/me/connected-apps', (ctx) => {
+    if (!hooks.mcp) throw notFound()
+    return db.grants.filter((g) => g.user_id == ctx.user.id && g.expires_at > now()).map(grantView)
+  })
+  route('DELETE', '/api/me/connected-apps/:id', (ctx) => {
+    if (!hooks.mcp) throw notFound()
+    // someone else's grant does not exist as far as this user can tell
+    const i = db.grants.findIndex((g) => g.user_id == ctx.user.id && String(g.id) == ctx.params[0] && g.expires_at > now())
+    if (i < 0) throw notFound()
+    audit(ctx.user.id, 'oauth.revoke', db.grants[i].client_name, { oauth_grant: db.grants[i].id, reason: 'user' })
+    db.grants.splice(i, 1)
+    return null
   })
 
   // -- org members & audit --
@@ -738,9 +808,37 @@ export const createMockServer = (options = {}) => {
     req.pipe(out)
   }
 
+  /**
+   * /.well-known/* as the control plane serves it (docs/mcp.md): JSON or a 404, never the SPA shell,
+   * unless MCP is switched off altogether. Only the authorization-server document is mocked: the UI
+   * reads nothing else.
+   */
+  const handleWellKnown = (req, res, url) => {
+    if (!hooks.oauth || url.pathname != '/.well-known/oauth-authorization-server') return sendError(res, notFound())
+    const base = `http://${req.headers.host}`
+    sendJson(res, 200, {
+      issuer: base,
+      authorization_endpoint: base + '/oauth/authorize',
+      token_endpoint: base + '/oauth/token',
+      revocation_endpoint: base + '/oauth/revoke',
+      registration_endpoint: base + '/oauth/register',
+      scopes_supported: ['izlek:read', 'izlek:admin'],
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
+      code_challenge_methods_supported: ['S256'],
+      token_endpoint_auth_methods_supported: ['none'],
+      client_id_metadata_document_supported: true,
+    })
+  }
+
+  /** Paths a real control plane answers itself; in proxy mode they go upstream with /api/. */
+  const isControlPath = (p) => p.startsWith('/api/') || p.startsWith('/.well-known/') || p.startsWith('/oauth/') || p == '/mcp'
+
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost')
-    if (url.pathname.startsWith('/api/')) return upstream ? forward(req, res) : void handleApi(req, res, url)
+    if (upstream && isControlPath(url.pathname)) return forward(req, res)
+    if (url.pathname.startsWith('/api/')) return void handleApi(req, res, url)
+    if (hooks.mcp && url.pathname.startsWith('/.well-known/')) return handleWellKnown(req, res, url)
     if (url.pathname == '/healthz' || url.pathname == '/readyz') {
       res.writeHead(200, { 'Content-Type': 'text/plain' })
       return res.end('ok\n')
@@ -818,6 +916,7 @@ export const createMockServer = (options = {}) => {
       updated_at: now(),
     })
     db.deletions.push({ project_id: project.id, id: 'del_' + base62(12), user_ids: ['1042'], anon_ids: [], status: 'done', created_at: now() - 9 * 86_400_000, created_by: owner.id, note: 'Destek talebi #1841' })
+    connectDemoApps(owner.id)
   }
   if (options.seed) seed()
 
@@ -826,6 +925,8 @@ export const createMockServer = (options = {}) => {
     db,
     dataset,
     hooks,
+    connectApp,
+    connectDemoApps,
     listen: (port = 0, host = '127.0.0.1') =>
       new Promise((resolve) => server.listen(port, host, () => resolve(server.address().port))),
     close: () => new Promise((resolve) => server.close(resolve)),
