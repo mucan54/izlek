@@ -39,7 +39,9 @@ async fn handle(mut sock: TcpStream, registry: Arc<Registry>) -> std::io::Result
 
 /// Serves until the task is dropped. Returns the bound address.
 pub async fn serve(addr: &str, registry: Arc<Registry>) -> std::io::Result<std::net::SocketAddr> {
-    let listener = TcpListener::bind(addr).await?;
+    // ":9102" means every interface, as it does for the Go services.
+    let addr = if addr.starts_with(':') { format!("0.0.0.0{addr}") } else { addr.to_owned() };
+    let listener = TcpListener::bind(&addr).await?;
     let local = listener.local_addr()?;
     tokio::spawn(async move {
         loop {

@@ -1,8 +1,7 @@
 # Tek makine dağıtımı (taslak).
 #
-# DOĞRULANMADI: bu dosya ve deploy/docker/*.Dockerfile, yazıldıkları ortamda Docker ile
-# derlenip çalıştırılamadı. Aynı süreç düzeni (ortak dosya deposu, aynı ortam değişkenleri)
-# Docker'sız olarak deploy/local/run.sh ve e2e/run.mjs ile doğrulandı.
+# Doğrulama: CI her koşuda bu dosyayı derler, başlatır ve deploy/compose/smoke.sh ile
+# uçtan uca dener (kurulum → event → sorgu → kanarya → UI). Elle: aynı betik.
 #
 #   cp .env.example .env   # sırları doldurun
 #   docker compose up -d --build
@@ -37,10 +36,10 @@ services:
     restart: unless-stopped
 
   shipper:
-    build: &engine { context: ../.., dockerfile: deploy/docker/engine.Dockerfile, args: { PKG: la-shipper, BIN: la-shipper } }
+    build: &engine { context: ../.., dockerfile: deploy/docker/engine.Dockerfile, target: shipper }
     depends_on: { init: { condition: service_completed_successfully } }
     command: ["ship"]
-    environment: { <<: *store, LA_METRICS_ADDR: ":9102" }
+    environment: { <<: *store, LA_METRICS_ADDR: "0.0.0.0:9102" }
     volumes: [data:/data]
     restart: unless-stopped
 
@@ -48,12 +47,12 @@ services:
     build: *engine
     depends_on: { init: { condition: service_completed_successfully } }
     command: ["compact"]
-    environment: { <<: *store, LA_METRICS_ADDR: ":9103", LA_COMPACTOR_SPOOL: /data/spool }
+    environment: { <<: *store, LA_METRICS_ADDR: "0.0.0.0:9103", LA_COMPACTOR_SPOOL: /data/spool }
     volumes: [data:/data]
     restart: unless-stopped
 
   query:
-    build: { context: ../.., dockerfile: deploy/docker/engine.Dockerfile, args: { PKG: la-query, BIN: la-query } }
+    build: { context: ../.., dockerfile: deploy/docker/engine.Dockerfile, target: query }
     depends_on: { init: { condition: service_completed_successfully } }
     environment:
       <<: *store

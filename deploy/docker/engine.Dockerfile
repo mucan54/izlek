@@ -1,16 +1,21 @@
-# Rust bileşenleri (shipper/compactor, query) için ortak imaj tarifi.
-#   docker build -f deploy/docker/engine.Dockerfile --build-arg PKG=la-shipper --build-arg BIN=la-shipper -t la-shipper .
-#   docker build -f deploy/docker/engine.Dockerfile --build-arg PKG=la-query   --build-arg BIN=la-query   -t la-query .
+# syntax=docker/dockerfile:1
+# Rust bileşenleri: tek derleme aşaması, iki hedef.
+#   docker build -f deploy/docker/engine.Dockerfile --target shipper -t la-shipper .   # ship | compact | rebuild
+#   docker build -f deploy/docker/engine.Dockerfile --target query   -t la-query .
 FROM rust:1.97-bookworm AS build
 WORKDIR /src/engine
 COPY engine/ ./
-ARG PKG=la-shipper
-ARG BIN=la-shipper
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/engine/target \
-    cargo build --release --locked -p ${PKG} --bin ${BIN} && cp target/release/${BIN} /out-bin
+    cargo build --release --locked -p la-shipper -p la-query \
+    && mkdir /out && cp target/release/la-shipper target/release/la-query /out/
 
-FROM gcr.io/distroless/cc-debian12:nonroot
-COPY --from=build /out-bin /app
+FROM gcr.io/distroless/cc-debian12:nonroot AS shipper
+COPY --from=build /out/la-shipper /app
+USER nonroot:nonroot
+ENTRYPOINT ["/app"]
+
+FROM gcr.io/distroless/cc-debian12:nonroot AS query
+COPY --from=build /out/la-query /app
 USER nonroot:nonroot
 ENTRYPOINT ["/app"]
