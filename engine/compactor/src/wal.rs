@@ -10,6 +10,9 @@ use la_core::time::{day_of, DAY_MS};
 /// `_done` markers outlive their segments by this much, so a marker is never
 /// removed while its segment could still be discovered.
 const DONE_EXTRA_MS: i64 = 3 * DAY_MS;
+/// Touched-project records are consumed within a minute; a compactor that was
+/// away for longer starts with a full cycle anyway.
+const TOUCHED_KEEP_MS: i64 = 2 * DAY_MS;
 
 pub async fn wal_lifecycle(ctx: &Ctx, now_ms: i64) -> Result<u64> {
     let store = &ctx.store;
@@ -44,6 +47,15 @@ pub async fn wal_lifecycle(ctx: &Ctx, now_ms: i64) -> Result<u64> {
     for shardkey in store.list_dirs("wal/_quarantine").await? {
         for o in store.list(&keys::wal_quarantine_dir(&shardkey)).await? {
             if o.last_modified_ms < now_ms - retention_ms {
+                store.delete(&o.key).await?;
+                deleted += 1;
+            }
+        }
+    }
+    // Touched-project records only matter until the next full cycle.
+    for shardkey in store.list_dirs("wal/_touched").await? {
+        for o in store.list(&keys::wal_touched_dir(&shardkey)).await? {
+            if o.last_modified_ms < now_ms - TOUCHED_KEEP_MS {
                 store.delete(&o.key).await?;
                 deleted += 1;
             }

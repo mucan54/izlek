@@ -46,6 +46,16 @@ pub fn wal_done(shardkey: &str, segment_name: &str) -> String {
     format!("wal/_done/{shardkey}/{segment_name}.ok")
 }
 
+/// Projects a shipper plan wrote to, so the compactor's frequent cycle can
+/// look at those instead of listing every project (`spec/manifest.md` §6).
+pub fn wal_touched_dir(shardkey: &str) -> String {
+    format!("wal/_touched/{shardkey}")
+}
+
+pub fn wal_touched(shardkey: &str, plan: u64) -> String {
+    format!("wal/_touched/{shardkey}/{plan:010}.json")
+}
+
 /// Record of a segment the shipper skipped because it could not be decoded
 /// (extension of `spec/manifest.md` §1; shares the `wal/` lifecycle).
 pub fn wal_quarantine_dir(shardkey: &str) -> String {

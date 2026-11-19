@@ -19,6 +19,8 @@ const MAX_ROUNDS_PER_DAY: usize = 4;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CycleReport {
+    /// Projects that compacted something or failed: worth another look soon.
+    pub busy: Vec<u32>,
     pub projects: usize,
     pub compactions: usize,
     pub gc_deleted: u64,
@@ -161,14 +163,35 @@ pub async fn cycle(
     global: bool,
     owns: &(dyn Fn(u32) -> bool + Sync),
 ) -> Result<CycleReport> {
+    cycle_over(ctx, now_ms, full, global, owns, None).await
+}
+
+/// [`cycle`] over `only` when given, instead of every project found in the
+/// store. Listing all projects costs a few requests per project; the frequent
+/// cycle of the service passes the projects the shipper reported as touched.
+pub async fn cycle_over(
+    ctx: &Ctx,
+    now_ms: i64,
+    full: bool,
+    global: bool,
+    owns: &(dyn Fn(u32) -> bool + Sync),
+    only: Option<&BTreeSet<u32>>,
+) -> Result<CycleReport> {
     let projects_cfg = Projects::load(&ctx.store).await?;
     let mut report = CycleReport::default();
     let mut l0: HashMap<u32, usize> = HashMap::new();
-    for project in known_projects(ctx).await?.into_iter().filter(|p| owns(*p)) {
+    let candidates: Vec<u32> = match only {
+        Some(set) => set.iter().copied().collect(),
+        None => known_projects(ctx).await?,
+    };
+    for project in candidates.into_iter().filter(|p| owns(*p)) {
         report.projects += 1;
         let pcfg = projects_cfg.get_or_default(project);
         match process_project(ctx, project, &pcfg, now_ms, full).await {
             Ok(r) => {
+                if r.compactions > 0 {
+                    report.busy.push(project);
+                }
                 report.compactions += r.compactions;
                 report.gc_deleted += r.gc_deleted;
                 report.days_expired += r.days_expired;
@@ -176,6 +199,7 @@ pub async fn cycle(
                 l0.insert(project, r.l0_files);
             }
             Err(e) => {
+                report.busy.push(project);
                 report.errors += 1;
                 ctx.metrics.inc("errors_total", &[], 1);
                 tracing::error!(project, error = %e, "project pass failed");
@@ -217,9 +241,10 @@ pub struct RunOptions {
 pub async fn run(ctx: Ctx, opts: RunOptions, mut shutdown: tokio::sync::watch::Receiver<bool>) -> Result<()> {
     let mut keepers: HashMap<String, LeaseKeeper> = HashMap::new();
     let mut last_full = 0i64;
+    let mut hot = HotState::default();
     tracing::info!(store = ctx.store.describe(), holder = %ctx.holder, "compactor started");
     loop {
-        let pass = run_pass(&ctx, &opts, &mut keepers, &mut last_full).await;
+        let pass = run_pass(&ctx, &opts, &mut keepers, &mut last_full, &mut hot).await;
         match pass {
             Ok(report) if opts.once => {
                 return if report.errors == 0 {
@@ -246,11 +271,68 @@ pub async fn run(ctx: Ctx, opts: RunOptions, mut shutdown: tokio::sync::watch::R
     }
 }
 
+/// What the service remembers between cycles so that the frequent one does
+/// not have to list every project.
+#[derive(Debug, Default)]
+pub struct HotState {
+    /// Highest touched record consumed, per shardkey.
+    cursors: HashMap<String, u64>,
+    /// Projects to look at again (touched since, compacted last time, failed).
+    pending: BTreeSet<u32>,
+}
+
+impl HotState {
+    /// Reads the touched records newer than the cursors of `shardkeys` into
+    /// `pending`. Returns `false` when a shardkey has no cursor yet (first
+    /// cycle, new lease): only a full cycle can establish one.
+    pub async fn advance(&mut self, ctx: &Ctx, shardkeys: &[String], establish: bool) -> Result<bool> {
+        let mut known = true;
+        for shardkey in shardkeys {
+            let cursor = self.cursors.get(shardkey).copied();
+            if cursor.is_none() && !establish {
+                known = false;
+                continue;
+            }
+            let mut highest = cursor.unwrap_or(0);
+            for o in ctx.store.list(&keys::wal_touched_dir(shardkey)).await? {
+                let Some(n) = keys::plan_number(&o.key) else { continue };
+                if cursor.is_some_and(|c| n > c) {
+                    #[derive(serde::Deserialize)]
+                    struct Touched {
+                        #[serde(default)]
+                        projects: Vec<u32>,
+                    }
+                    if let Some(t) = ctx.store.get_json::<Touched>(&o.key).await? {
+                        self.pending.extend(t.projects);
+                    }
+                }
+                highest = highest.max(n);
+            }
+            self.cursors.insert(shardkey.clone(), highest);
+        }
+        Ok(known)
+    }
+
+    pub fn pending(&self) -> &BTreeSet<u32> {
+        &self.pending
+    }
+
+    /// After a cycle: keep only the projects that may have more to do.
+    pub fn settle(&mut self, busy: &[u32]) {
+        self.pending = busy.iter().copied().collect();
+    }
+
+    fn forget_except(&mut self, prefix: &str) {
+        self.cursors.retain(|k, _| k.starts_with(prefix));
+    }
+}
+
 async fn run_pass(
     ctx: &Ctx,
     opts: &RunOptions,
     keepers: &mut HashMap<String, LeaseKeeper>,
     last_full: &mut i64,
+    hot: &mut HotState,
 ) -> Result<CycleReport> {
     let now = la_core::time::now_ms();
     let shards = Shards::load(&ctx.store).await?;
@@ -280,10 +362,28 @@ async fn run_pass(
         tracing::info!("no compactor lease held; standing by");
         return Ok(CycleReport::default());
     }
-    let full = opts.once || now - *last_full >= ctx.cfg.full_scan_interval_ms;
+    hot.forget_except(&format!("{}-", map.version));
+    let mut owned_keys: Vec<String> = owned.iter().map(|s| format!("{}-{}", map.version, s)).collect();
+    owned_keys.sort();
+    let mut full = opts.once || now - *last_full >= ctx.cfg.full_scan_interval_ms;
+    // The frequent cycle follows the shipper's touched records. A shard
+    // without a cursor (first cycle, lease just taken) needs a full one.
+    if !full && !hot.advance(ctx, &owned_keys, false).await? {
+        full = true;
+    }
+    if full {
+        // Cursors are taken before the scan: whatever lands during it is
+        // picked up by the next frequent cycle.
+        hot.advance(ctx, &owned_keys, true).await?;
+    }
     let global = owned.contains(&0);
     let owns = |p: u32| owned.contains(&la_codec::murmur3::shard_of(p, map.shards.max(1)));
-    let report = cycle(ctx, now, full, global, &owns).await?;
+    let report = if full {
+        cycle(ctx, now, true, global, &owns).await?
+    } else {
+        cycle_over(ctx, now, false, global, &owns, Some(hot.pending())).await?
+    };
+    hot.settle(&report.busy);
     if full {
         *last_full = now;
     }

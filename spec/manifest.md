@@ -189,6 +189,7 @@ Aynı önek altındaki ek nesneler (uygulama ayrıntısı; okuyucular bilinmeyen
 | `wal/_quarantine/<shardkey>/<segment>.json` | Açılamayan, sihri bozuk, eksik ya da çok büyük segment: neden ve plan numarası. Segment `_done` sayılır, veri **yazılmaz**; `la_shipper_segments_quarantined_total` artar (`docs/runbooks/corrupt-segment.md`) |
 | plan JSON'unda `rebuild` alanı | Rebuild planı ("çit"): bitene kadar shipper yeni plan kesmez |
 | `wal/_done/<shardkey>/_rebuild-<n:010>.ok` | Rebuild planı `n` tamamlandı; çit kalkar |
+| `wal/_touched/<shardkey>/<n:010>.json` | `{"n": n, "projects": [pid…]}`: plan `n`'in yazdığı projeler. Manifest'lerden sonra, `_done`'dan önce yazılır (biten planın kaydı mutlaka vardır; aynı plan hep aynı listeyi üretir). Compactor'ın dakikalık turu yalnızca son gördüğü numaradan büyük kayıtlardaki projelere (ve bir önceki turda iş çıkan ya da hata veren projelere) bakar; böylece boşta tur, proje sayısından bağımsız olarak shard başına tek `LIST`'tir. Saatlik tam tur tüm projeleri tarar ve bildirilmemiş işi de yakalar. Kayıtlar 2 gün sonra silinir; imleci olmayan (yeni başlamış, kirayı yeni almış) compactor önce tam tur atar |
 
 ## 7. Kira (lease)
 

@@ -484,6 +484,10 @@ async fn project_config_drop_keys_unknown_projects_and_bots() {
         assert_eq!(c.metrics.counter_value("records_rejected_total", &[("reason", reason)]), n);
     }
     assert_eq!(manifest::list_projects(&store).await.unwrap(), [7]);
+    // The plan tells the compactor which projects it wrote to (and only those).
+    let touched: serde_json::Value =
+        store.get_json(&keys::wal_touched("1-0", 1)).await.unwrap().expect("touched record");
+    assert_eq!(touched, serde_json::json!({ "n": 1, "projects": [7] }));
     let rows = &snapshot(&store, 7).await.rows[DAY];
     assert_eq!(rows.len(), 1);
     assert!(rows[0].props.contains_key("k") && !rows[0].props.contains_key("email"));

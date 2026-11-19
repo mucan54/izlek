@@ -572,6 +572,9 @@ pub async fn execute_plan(ctx: &ShipCtx, shards: &Shards, plan: &Plan, state: &m
         report_decode(ctx, &st, &mut out);
     }
 
+    // Every project this plan wrote anything for (side tables included).
+    let touched: Vec<u32> = rows.keys().copied().collect();
+
     // 4–6. L0 files → day manifests → schema statistics.
     for (project, p) in rows {
         report_decode(ctx, &p.decode, &mut out);
@@ -583,6 +586,14 @@ pub async fn execute_plan(ctx: &ShipCtx, shards: &Shards, plan: &Plan, state: &m
     // The identity cache only saves reloads; keep it from growing without bound.
     if state.identity.len() > IDENTITY_CACHE_PROJECTS {
         state.identity.clear();
+    }
+
+    // 6b. Tell the compactor which projects changed. Written after the
+    //     manifests (the data is visible) and before `_done` (a finished plan
+    //     always has it); the same plan always names the same projects.
+    if !touched.is_empty() {
+        let record = serde_json::json!({ "n": plan.n, "projects": touched });
+        store.put_json(&keys::wal_touched(shardkey, plan.n), &record).await?;
     }
 
     // 7. `_done` markers, last.

@@ -8,7 +8,7 @@ Bu belge tasarımın "production'a hazır olma listesi"ni (§21) ve "ölçülece
 
 - Tasarımdaki bütün bileşenler yazıldı: ingestion, shipper, compactor, sorgu servisi, control plane, UI, Web SDK, KMP SDK, kanarya, PostHog adaptörü, flag'ler, session replay.
 - Tek makinede gerçek binary'lerle uçtan uca çalışıyor; bu, `file://` depoda ve S3 protokolü üzerinden (depodaki geliştirme S3 sunucusu) otomatik testle gösterildi (`e2e/`).
-- **Production'a hazır değil.** Eksikler aşağıda; en önemlileri: bulut sağlayıcısının kendi S3'ü (yalnızca MinIO denendi), çok node, gerçek mobil cihazlar, uzun süreli yük ve kanarya, tatbikatlar, Docker imajları, dış güvenlik incelemesi.
+- **Production'a hazır değil.** Eksikler aşağıda; en önemlileri: bulut sağlayıcısının kendi S3'ü (yalnızca MinIO denendi), çok node, gerçek mobil cihazlar, uzun süreli yük ve kanarya, tatbikatların çoğu, dış güvenlik incelemesi.
 
 ## 2. Otomatik testler (bu depoda, son koşu)
 
@@ -49,6 +49,21 @@ Depo kesintisi tatbikatı (`node e2e/outage.mjs --seconds 600`, 50 event/sn, tek
 | Depo `503` dönüyor | 28 960 | 0 | 9,7 → 8,3 ms | 4,9 MB | hepsi `500` | 15,2 sn | 29 675 / 29 675 görünür, çift yok |
 | Depo yanıt vermiyor | 29 920 | 0 | 9,8 → 8,0 ms | 4,9 MB | hepsi istemci zaman aşımı (30 sn) | 7,1 sn | 30 635 / 30 635 görünür, çift yok |
 
+Çok sayıda küçük proje (`node e2e/many-projects.mjs --projects 10000`; proje başına iki turda 5'er event, release shipper, depo olarak istek sayan geliştirme S3 sunucusu):
+
+| Adım | Süre | Tepe bellek | `LIST` | `GET` | `PUT` |
+|---|---:|---:|---:|---:|---:|
+| Shipper, 10 000 projeyi tek planda yazıyor (1. tur) | 32 sn | 118 MB | 50 053 | 20 004 | 30 003 |
+| Shipper, 2. tur | 38 sn | 153 MB | 50 053 | 40 004 | 30 002 |
+| Shipper, yeni veri yokken bir tur | < 0,1 sn | — | 52 | 2 | 0 |
+| Compactor, her projede iş varken tam tur | 89 sn | 30 MB | 130 020 | 60 002 | 20 000 |
+| Compactor, iş yokken tam tur (saatte bir) | 24 sn | 15 MB | 100 020 | 20 002 | 0 |
+| Compactor, iş yokken sıcak tur (dakikada bir) — **önce** | ≤ 8 sn | — | 30 014 | 10 002 | 0 |
+| Compactor, iş yokken sıcak tur — **dokunulan projeler kaydıyla** (2 000 projede ölçüldü; proje sayısından bağımsız) | < 1 sn | — | 1 | 2 | 0 |
+| Tek projede bir sorgu | 7–21 ms | — | 5 | 4 | 0 |
+
+Nesne sayısı: iki turdan sonra proje başına 5 (2 veri dosyası, 2 manifest sürümü, şema), compaction sonrası GC'ye kadar 7. Beş event'lik bir Parquet dosyası ≈ 6,9 KB'tır (dosya başı sabit yük). Shipper ve compactor projeleri sırayla işler; süreler bu yüzden proje sayısıyla doğrusal büyür ve geliştirme sunucusunun hızına bağlıdır. İstek sayıları ise depodan bağımsızdır.
+
 Veri sentetiktir (küçük event'ler); gerçek veride `b` ve `w` farklı çıkar. Hiçbir ölçüm gerçek object storage ya da ayrı makinedeki yük üreteciyle yapılmadı.
 
 ## 4. Tasarım varsayımları (§19)
@@ -65,7 +80,7 @@ Veri sentetiktir (küçük event'ler); gerçek veride `b` ve `w` farklı çıkar
 | 8 | Arka plan gönderimi güvenilir (Android/iOS) | **Doğrulanmadı.** Cihaz testi yok |
 | 9 | Özellik terfisi şema patlamasına yol açmaz | Sınır (200 sütun) uygulanıyor; gerçek veride izlenmedi |
 | 10 | PostHog SDK'ları adaptörü kabul eder | Web ve Node (5.x) için doğrulandı; Node 6.x uyumsuz; Android/iOS denenmedi |
-| 11 | 10 000 küçük proje yönetilebilir | **Doğrulanmadı.** Sentetik test yapılmadı |
+| 11 | 10 000 küçük proje yönetilebilir | **Büyük ölçüde.** İzolasyon ve sayımlar doğru, shipper ve compactor belleği düşük (aşağıdaki ölçüm). İlk ölçüm compactor'ın dakikalık turunun proje başına ≈ 3 `LIST` attığını gösterdi (10 000 projede günde ≈ 43 M `LIST`); bunun üzerine shipper dokunduğu projeleri kaydetmeye, compactor da dakikalık turda yalnızca onlara bakmaya başladı: boşta tur artık shard başına 1 `LIST`. Kalan maliyet saatlik tam turdur (proje başına ≈ 10 `LIST`, 10 000 projede günde ≈ 2,4 M) ve aktif projelerde plan başına ≈ 5 `LIST`; ikisi de azaltılabilir, yapılmadı |
 
 ## 5. Production'a hazır olma listesi (§21)
 
@@ -122,7 +137,7 @@ Veri sentetiktir (küçük event'ler); gerçek veride `b` ve `w` farklı çıkar
 8. **Flag `str()`**: çok büyük/küçük ondalık sayıların üstel gösterimi diller arasında farklı olabilir; hiçbir vektör bunu kapsamıyor. Flag koşullarında böyle değerlerle `eq`/`contains` kullanmayın.
 9. **Shipper belleği** plan boyutuyla orantılıdır (`LA_SHIPPER_BATCH_MB`, varsayılan 64).
 10. **OIDC yok**; e-posta gönderimi yok (ilk parolayı yönetici verir).
-11. **Docker imajları ve Compose dosyası derlenip çalıştırılmadı.**
+11. **Docker imajları ve Compose dosyası** yalnızca CI'da (`deploy/compose/smoke.sh`: derle, kur, event gönder, sorguda gör, kanarya, temiz kapanış) doğrulandı; tek makine, dosya deposu. TLS vekili, S3 ve çok makineli kurulumla denenmedi.
 12. `/q/paths` ve ön toplamalar (v1.1) yok.
 
 ## 7. Tasarıma eklenenler

@@ -246,3 +246,60 @@ async fn closed_project_is_purged() {
     let r = run::cycle(&c, open_now(), true, false, &all).await.unwrap();
     assert_eq!(r.projects, 1);
 }
+
+/// The frequent cycle of the service follows the shipper's touched records
+/// instead of listing every project.
+#[tokio::test]
+async fn hot_cycle_follows_touched_records() {
+    let store = Store::memory();
+    let mut c = ctx(&store);
+    c.cfg.l0_trigger_files = 1;
+    let shard = ["1-0".to_owned()];
+    let all = |_: u32| true;
+    let l0s = |keys: Vec<String>| keys.into_iter().filter(|k| k.contains("/L0-")).count();
+    for pid in [7, 8] {
+        add_l0(&store, pid, DAY, 1, vec![row(1, "u:a", "d", t0())]).await;
+    }
+    store.put(&keys::wal_touched("1-0", 1), &br#"{"n":1,"projects":[7,8]}"#[..]).await.unwrap();
+
+    // Without a cursor the hot path refuses: a full cycle has to come first.
+    let mut hot = run::HotState::default();
+    assert!(!hot.advance(&c, &shard, false).await.unwrap());
+    assert!(hot.advance(&c, &shard, true).await.unwrap());
+    let full = run::cycle(&c, open_now(), true, false, &all).await.unwrap();
+    hot.settle(&full.busy);
+    assert!(hot.pending().is_empty(), "one L0 file per project: nothing was compacted");
+
+    // New files in both projects, but the shipper's record names only project 7.
+    for pid in [7, 8] {
+        add_l0(&store, pid, DAY, 2, vec![row(2, "u:b", "d", t0() + 1)]).await;
+    }
+    store.put(&keys::wal_touched("1-0", 2), &br#"{"n":2,"projects":[7]}"#[..]).await.unwrap();
+    assert!(hot.advance(&c, &shard, false).await.unwrap());
+    assert_eq!(hot.pending().iter().copied().collect::<Vec<_>>(), [7]);
+    let r = run::cycle_over(&c, open_now(), false, false, &all, Some(hot.pending())).await.unwrap();
+    assert_eq!((r.projects, r.compactions, r.busy.clone()), (1, 1, vec![7]));
+    let live = |m: la_core::manifest::DayManifest| m.files.iter().filter(|f| f.level == 0).count();
+    assert_eq!(live(manifest::load_day(&store, 7, DAY).await.unwrap()), 0, "project 7 was compacted");
+    assert_eq!(live(manifest::load_day(&store, 8, DAY).await.unwrap()), 2, "project 8 waits for the full cycle");
+    assert!(l0s(all_keys(&store, "data/p=8").await) == 2);
+
+    // A project that compacted is looked at once more, then dropped.
+    hot.settle(&r.busy);
+    assert!(hot.advance(&c, &shard, false).await.unwrap());
+    assert_eq!(hot.pending().iter().copied().collect::<Vec<_>>(), [7]);
+    let r = run::cycle_over(&c, open_now(), false, false, &all, Some(hot.pending())).await.unwrap();
+    assert_eq!((r.projects, r.compactions), (1, 0));
+    hot.settle(&r.busy);
+    assert!(hot.pending().is_empty());
+
+    // Nothing touched: the frequent cycle visits no project at all.
+    assert!(hot.advance(&c, &shard, false).await.unwrap());
+    let r = run::cycle_over(&c, open_now(), false, false, &all, Some(hot.pending())).await.unwrap();
+    assert_eq!(r.projects, 0);
+
+    // The hourly full cycle catches what was never reported.
+    let r = run::cycle(&c, open_now(), true, false, &all).await.unwrap();
+    assert_eq!(r.compactions, 1);
+    assert_eq!(live(manifest::load_day(&store, 8, DAY).await.unwrap()), 0);
+}
