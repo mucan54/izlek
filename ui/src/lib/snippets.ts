@@ -1,6 +1,9 @@
 // SDK install snippets for the settings page, filled with the selected write
 // token and the ingestion host. Kept as plain template strings so they stay
-// easy to compare with the SDK READMEs.
+// easy to compare with the SDK READMEs. Only the human-readable comments come
+// from the locale (read when a snippet is built, so they follow the language);
+// event names and identifiers are sample data and are not translated.
+import { S } from '../i18n'
 
 export interface SnippetInput {
   token: string
@@ -42,8 +45,8 @@ export const android = ({ token, host }: SnippetInput): string =>
   `// build.gradle.kts
 dependencies {
     implementation("dev.izlek:analytics-core:0.1.0")
-    implementation("dev.izlek:analytics-flags:0.1.0")   // isteğe bağlı
-    implementation("dev.izlek:analytics-replay:0.1.0")  // isteğe bağlı
+    implementation("dev.izlek:analytics-flags:0.1.0")   // ${S.sdk.commentOptional}
+    implementation("dev.izlek:analytics-replay:0.1.0")  // ${S.sdk.commentOptional}
 }
 
 // Application.onCreate()
@@ -61,7 +64,7 @@ Analytics.identify("kullanici-17", mapOf("plan" to "pro"))
 `
 
 export const ios = ({ token, host }: SnippetInput): string =>
-  `// AppDelegate / App.init — KMP çatısı (IzlekAnalytics.xcframework)
+  `// AppDelegate / App.init — ${S.sdk.commentKmp} (IzlekAnalytics.xcframework)
 import IzlekAnalytics
 
 Analytics.shared.setup(

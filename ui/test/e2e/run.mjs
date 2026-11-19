@@ -34,6 +34,9 @@ const port = await mock.listen(0)
 const base = `http://127.0.0.1:${port}`
 
 const browser = await chromium.launch()
+// The UI picks its language from the browser (Turkish only for tr-*, English otherwise) and Playwright's
+// default locale is en-US: the scenario below asserts Turkish text, so the context is Turkish explicitly.
+// The language step further down switches to English and back through the UI.
 const context = await browser.newContext({ viewport: { width: 1366, height: 860 }, locale: 'tr-TR', colorScheme: 'light' })
 await context.grantPermissions(['clipboard-read', 'clipboard-write'])
 const page = await context.newPage()
@@ -773,6 +776,115 @@ await step('account: change password; enable TOTP; login then asks for the code'
   await page.getByRole('button', { name: 'İki adımlı doğrulamayı kapat' }).click()
   await page.getByText('İki adımlı doğrulama kapatıldı.').waitFor()
   await toastGone()
+})
+
+/** The language step itself; the step wrapper below restores Turkish whatever happens in here. */
+const languageScenario = async (lang) => {
+  await go('/account')
+  await heading('Hesap').waitFor()
+  assert.deepEqual(await lang(), ['tr', null], 'Turkish came from the browser language (tr-TR); nothing is stored until the user chooses')
+  const picker = page.getByLabel('Dil', { exact: true })
+  assert.equal(await picker.inputValue(), 'tr')
+  assert.deepEqual(await picker.locator('option').allInnerTexts(), ['Türkçe', 'English'], 'languages are listed by their own names')
+
+  // the switch re-renders in place: no navigation, no reload
+  await page.evaluate(() => (window.__sameDocument = true))
+  await picker.selectOption('en')
+  await heading('Account').waitFor()
+  assert.equal(await page.evaluate(() => window.__sameDocument), true, 'the page was not reloaded')
+  assert.deepEqual(await lang(), ['en', 'en'])
+  assert.equal(await page.getByLabel('Language', { exact: true }).inputValue(), 'en')
+  for (const name of ['Preferences', 'Change password', 'Two-step verification (TOTP)']) await page.getByRole('heading', { name, exact: true }).waitFor()
+  await page.getByRole('button', { name: 'Change password' }).waitFor()
+  const nav = await page.locator('.nav').innerText()
+  for (const item of ['Dashboards', 'Insights', 'Event stream', 'People', 'Feature flags', 'Deletion requests', 'Project settings', 'Projects', 'Members', 'Audit log'])
+    assert.ok(nav.split('\n').includes(item), `menu item "${item}" in: ${nav.replace(/\n/g, ' | ')}`)
+  assert.equal(await page.getByRole('navigation', { name: 'Main navigation' }).count(), 1)
+  assert.match(await page.locator('a.user').innerText(), /Owner/)
+  await page.getByRole('button', { name: 'Sign out' }).waitFor()
+  const turkish = await page.getByText(/[çğışöüÇĞİŞÖÜ]/).locator('visible=true').allInnerTexts()
+  assert.deepEqual(turkish, ['İzlek', 'Örnek A.Ş.'], 'only the brand and the organization’s own name: no Turkish UI text is left on the account page')
+  await shot('29b-account-en')
+
+  // a full page load starts in the stored language; numbers and percentages follow it too
+  await go(`/p/${pid}/insights/${insightIds.funnel}`)
+  await page.locator('.funnel-step').nth(2).waitFor()
+  assert.deepEqual(await lang(), ['en', 'en'])
+  assert.match(await page.locator('.headline').innerText(), /^\d+(\.\d)?% overall conversion · [\d,]+ of [\d,]+ people reached the last step$/)
+  const steps = await page.locator('.funnel-step').allInnerTexts()
+  assert.match(steps[0], /signup[\s\S]*100%[\s\S]*People who entered the funnel/)
+  assert.match(steps[1], /From previous step: \d+(\.\d)?%[\s\S]*Dropped off: [\d,]+[\s\S]*Median time: \d/)
+  for (const name of ['Run', 'Save', 'Save as copy', 'Delete']) assert.equal(await page.getByRole('button', { name, exact: true }).count(), 1, `button "${name}"`)
+  await page.getByRole('link', { name: 'Insights' }).first().waitFor()
+  await shot('29c-funnel-en')
+  await page.reload()
+  await page.locator('.funnel-step').nth(2).waitFor()
+  await page.getByRole('button', { name: 'Save as copy' }).waitFor()
+  assert.deepEqual(await lang(), ['en', 'en'], 'the choice survives a reload')
+
+  await page.getByRole('link', { name: 'Feature flags' }).click()
+  await heading('Feature flags').waitFor()
+  assert.match(await page.locator('tr', { hasText: 'new_checkout' }).innerText(), /platform = ios · 25% → control 60%, test 40%/)
+  await page.getByRole('link', { name: 'New flag' }).waitFor()
+  await page.getByRole('link', { name: 'Project settings' }).click()
+  await heading('Project settings').waitFor()
+  assert.deepEqual(await page.getByRole('tab').allInnerTexts(), ['General', 'Write tokens', 'Secret keys', 'SDK setup'])
+  await page.getByRole('tab', { name: 'SDK setup' }).click()
+  await page.getByRole('tab', { name: 'Android' }).click()
+  assert.match(await page.getByTestId('snippet').innerText(), /analytics-replay:0\.1\.0"\)\s+\/\/ optional/)
+
+  // the login form offers the switch too; there it is operated with the keyboard only
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await page.getByRole('heading', { name: 'Sign in' }).waitFor()
+  for (const label of ['Email', 'Password']) await page.getByLabel(label, { exact: true }).waitFor()
+  await page.getByRole('button', { name: 'Sign in' }).waitFor()
+  await shot('29d-login-en')
+  const loginPicker = page.getByLabel('Language', { exact: true })
+  assert.equal(await loginPicker.inputValue(), 'en')
+  await loginPicker.focus()
+  await page.keyboard.press('ArrowUp') // Türkçe is listed before English
+  await page.getByRole('heading', { name: 'Oturum aç' }).waitFor()
+  assert.deepEqual(await lang(), ['tr', 'tr'])
+  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('data-testid')), 'lang-switch', 'focus stays on the switch after the screen is rebuilt')
+  assert.equal(await page.getByLabel('Dil', { exact: true }).inputValue(), 'tr')
+  await page.reload()
+  await page.getByRole('heading', { name: 'Oturum aç' }).waitFor()
+  assert.deepEqual(await lang(), ['tr', 'tr'])
+
+  // without a stored choice the browser language decides: Turkish only for Turkish browsers
+  for (const [locale, title, picked] of [['en-US', 'Sign in', 'en'], ['de-DE', 'Sign in', 'en'], ['tr-TR', 'Oturum aç', 'tr']]) {
+    const other = await browser.newContext({ locale })
+    try {
+      const p = await other.newPage()
+      await p.goto(base + '/')
+      await p.getByRole('heading', { name: title }).waitFor()
+      assert.deepEqual(await p.evaluate(() => [document.documentElement.lang, localStorage.getItem('la_locale')]), [picked, null], `browser language ${locale}`)
+      if (locale != 'en-US') continue
+      // …and an explicit choice beats it from then on
+      await p.getByLabel('Language', { exact: true }).selectOption('tr')
+      await p.getByRole('heading', { name: 'Oturum aç' }).waitFor()
+      await p.reload()
+      await p.getByRole('heading', { name: 'Oturum aç' }).waitFor()
+      assert.equal(await p.getByLabel('Dil', { exact: true }).inputValue(), 'tr')
+    } finally {
+      await other.close()
+    }
+  }
+
+  // back in Turkish for the rest of the run
+  await login(OWNER)
+  await page.locator('.shell').waitFor()
+  await page.getByRole('button', { name: 'Çıkış yap' }).waitFor()
+}
+
+await step('language: switch to English on the account page, it persists across reloads, switch back on the login form', async () => {
+  const lang = () => page.evaluate(() => [document.documentElement.lang, localStorage.getItem('la_locale')])
+  try {
+    await languageScenario(lang)
+  } finally {
+    // the later steps assert Turkish text: do not let a failure in here leave the browser in English
+    await page.evaluate(() => localStorage.setItem('la_locale', 'tr')).catch(() => {})
+  }
 })
 
 await step('an expired session sends the user to the login form and back to the same page', async () => {

@@ -1,5 +1,6 @@
 // Turkish strings. Every user-facing text of the UI lives here; another
-// language is another module with the same shape (see ./index.ts).
+// language is another module with the same shape (./en.ts; see ./index.ts).
+// This module defines the shape: `Strings` is `typeof tr`.
 
 const byStatus: Record<number, string> = {
   400: 'İstek geçersiz.',
@@ -39,6 +40,7 @@ export const tr = {
     updated: 'Güncelleme',
     date: 'Tarih',
     actions: 'İşlemler',
+    language: 'Dil',
     days: (n: number) => `${n} gün`,
   },
   errors: {
@@ -54,6 +56,8 @@ export const tr = {
     hour: 'sa',
     day: 'gün',
     ago: (n: number, unit: string) => (n <= 0 ? 'az önce' : `${n} ${unit} önce`),
+    /** a formatted number as a percentage: the sign comes first in Turkish */
+    pct: (n: string) => `%${n}`,
   },
   roles: {
     owner: 'Sahip',
@@ -119,6 +123,8 @@ export const tr = {
     title: 'Hesap',
     orgsTitle: 'Organizasyonlar',
     org: 'Organizasyon',
+    prefsTitle: 'Tercihler',
+    languageHint: 'Bu tarayıcıda hatırlanır.',
     passwordTitle: 'Parola değiştir',
     currentPassword: 'Mevcut parola',
     newPassword: 'Yeni parola',
@@ -649,6 +655,9 @@ export const tr = {
     web: 'Web (npm)',
     script: 'Web (<script>)',
     note: 'Örnekler seçili token ve adresle doldurulur. Paket adları ve sürümler dağıtımınıza göre değişebilir.',
+    // comments inside the code samples (lib/snippets.ts)
+    commentOptional: 'isteğe bağlı',
+    commentKmp: 'KMP çatısı',
   },
 
   deletions: {

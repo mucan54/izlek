@@ -1,7 +1,7 @@
 // Small building blocks shared by every screen.
 import type { ComponentChildren, JSX } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
-import { S } from '../i18n'
+import { LOCALE, LOCALE_OPTIONS, S, chooseLocale } from '../i18n'
 import type { Async } from '../lib/hooks'
 import { fmtBytes, fmtInt } from '../lib/format'
 import type { Meta } from '../lib/types'
@@ -169,6 +169,44 @@ export const Select = <V extends string>({
     {options.map(([v, label]) => (
       <option value={v} key={v}>
         {label}
+      </option>
+    ))}
+  </select>
+)
+
+/** Set while a language change is rebuilding the screen: the new switch takes the focus back. */
+let refocusLanguage = false
+
+/**
+ * Language switch. The choice is stored (`la_locale`) and the app re-renders
+ * in the new language at once (see `App`). Languages are listed by their own
+ * names so they can be found by someone who cannot read the current one.
+ * The caller renders the `<label for={id}>`.
+ */
+export const LanguageSelect = ({ id, describedBy }: { id: string; describedBy?: string }) => (
+  <select
+    id={id}
+    name="locale"
+    class="input select"
+    data-testid="lang-switch"
+    aria-describedby={describedBy}
+    value={LOCALE}
+    // the switch itself is rebuilt with the rest of the screen: keep the keyboard user where they were
+    ref={(el) => {
+      if (el && refocusLanguage) {
+        refocusLanguage = false
+        el.focus()
+      }
+    }}
+    onChange={(e) => {
+      const code = e.currentTarget.value
+      refocusLanguage = code != LOCALE && document.activeElement == e.currentTarget
+      chooseLocale(code)
+    }}
+  >
+    {LOCALE_OPTIONS.map(([code, name]) => (
+      <option value={code} lang={code} key={code}>
+        {name}
       </option>
     ))}
   </select>

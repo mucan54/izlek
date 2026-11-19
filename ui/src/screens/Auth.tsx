@@ -4,7 +4,7 @@ import { S } from '../i18n'
 import { ApiError, type Api } from '../lib/api'
 import { useAction } from '../lib/hooks'
 import { useApp } from '../lib/session'
-import { Button, Card, ErrorNote, Field, Input, PageHead, focusOnMount, toast } from '../components/ui'
+import { Button, Card, ErrorNote, Field, Input, LanguageSelect, PageHead, focusOnMount, toast } from '../components/ui'
 
 const MIN_PASSWORD = 10
 
@@ -15,6 +15,10 @@ const AuthFrame = ({ title, sub, children }: { title: string; sub?: string; chil
       <h1>{title}</h1>
       {sub && <p class="muted">{sub}</p>}
       {children}
+      <div class="auth-lang">
+        <label for="auth-lang">{S.common.language}</label>
+        <LanguageSelect id="auth-lang" />
+      </div>
     </div>
   </main>
 )
@@ -252,6 +256,13 @@ export const Account = () => {
               ))}
             </tbody>
           </table>
+        </Card>
+        <Card title={S.account.prefsTitle}>
+          <div class="form-narrow">
+            <Field label={S.common.language} hint={S.account.languageHint}>
+              {(id, d) => <LanguageSelect id={id} describedBy={d} />}
+            </Field>
+          </div>
         </Card>
         <PasswordCard />
         <TotpCard />

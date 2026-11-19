@@ -1,7 +1,7 @@
 // Root: session bootstrap, routing and the application shell.
-import type { ComponentChildren } from 'preact'
+import { Fragment, type ComponentChildren } from 'preact'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import { S } from './i18n'
+import { LOCALE, S, onLocaleChange } from './i18n'
 import { ApiError, asList, createApi } from './lib/api'
 import { useAsync } from './lib/hooks'
 import { can } from './lib/roles'
@@ -27,6 +27,9 @@ export const App = () => {
   const [boot, setBoot] = useState<Boot>({ state: 'loading' })
   const bootRef = useRef(boot)
   bootRef.current = boot
+  // a language change remounts every screen (see the keyed fragment below)
+  const [locale, setLocaleShown] = useState(LOCALE)
+  useEffect(() => onLocaleChange(() => setLocaleShown(LOCALE)), [])
 
   const api = useMemo(
     () =>
@@ -95,7 +98,10 @@ export const App = () => {
   }
   return (
     <>
-      {body}
+      {/* Keyed by language: screens are rebuilt from scratch in the new language, so nothing
+          they captured (memoised labels, messages kept in state) stays in the old one.
+          The session and the API client live above the key and survive the switch. */}
+      <Fragment key={locale}>{body}</Fragment>
       <Toaster />
     </>
   )

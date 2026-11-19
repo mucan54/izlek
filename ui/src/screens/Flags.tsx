@@ -19,8 +19,8 @@ const words = () => ({ and: S.filter.andWord, or: S.filter.orWord, not: S.filter
 /** One-line description of a rule for the list and the history. */
 export const ruleSummary = (r: Rule): string => {
   const when = r.when ? summarize(r.when, words()) : S.flags.everyone
-  const rollout = '%' + bpToPct(r.rollout ?? TOTAL_BP)
-  const variants = r.variants?.length ? ' → ' + r.variants.map((v) => `${v.key} %${bpToPct(v.w)}`).join(', ') : ''
+  const rollout = S.fmt.pct(bpToPct(r.rollout ?? TOTAL_BP))
+  const variants = r.variants?.length ? ' → ' + r.variants.map((v) => `${v.key} ${S.fmt.pct(bpToPct(v.w))}`).join(', ') : ''
   return `${when} · ${rollout}${variants}`
 }
 

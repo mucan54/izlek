@@ -9,8 +9,9 @@ export const fmtInt = (n: number): string => nf({ maximumFractionDigits: 0 }).fo
 /** Up to 2 decimals, grouped; null → em dash. */
 export const fmtNum = (n: number | null | undefined): string => (n == null || Number.isNaN(n) ? '—' : nf({ maximumFractionDigits: 2 }).format(n))
 
+/** A ratio as a percentage; where the sign goes is the locale's call (%25 / 25%). */
 export const fmtPct = (ratio: number, digits = 1): string =>
-  Number.isFinite(ratio) ? '%' + nf({ maximumFractionDigits: digits, minimumFractionDigits: 0 }).format(ratio * 100) : '—'
+  Number.isFinite(ratio) ? S.fmt.pct(nf({ maximumFractionDigits: digits, minimumFractionDigits: 0 }).format(ratio * 100)) : '—'
 
 export const fmtCompact = (n: number): string => compact(n, S.fmt.compact, S.fmt.decimal)
 
@@ -36,7 +37,7 @@ export const fmtDate = (ms: number): string => new Intl.DateTimeFormat(INTL, { d
 
 export const fmtTime = (ms: number): string => new Intl.DateTimeFormat(INTL, { timeStyle: 'medium' }).format(new Date(ms))
 
-/** "3 dk önce" style relative time for recent instants, a date otherwise. */
+/** "3 dk önce" / "3 min ago" style relative time for recent instants, a date otherwise. */
 export const fmtAgo = (ms: number, now = Date.now()): string => {
   const s = Math.round((now - ms) / 1000)
   if (s < 0 || s > 7 * 86400) return fmtDateTime(ms)
@@ -46,7 +47,7 @@ export const fmtAgo = (ms: number, now = Date.now()): string => {
   return S.fmt.ago(Math.floor(s / 86400), S.fmt.day)
 }
 
-/** Duration from seconds: "42 sn", "3 dk 20 sn", "2 sa 5 dk", "4 gün 3 sa". */
+/** Duration from seconds: "42 sn", "3 dk 20 sn", "2 sa 5 dk", "4 gün 3 sa" (units come from the locale). */
 export const fmtDuration = (seconds: number | null | undefined): string => {
   if (seconds == null || !Number.isFinite(seconds)) return '—'
   const s = Math.max(0, seconds)
