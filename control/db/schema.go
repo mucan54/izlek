@@ -185,6 +185,75 @@ CREATE TABLE publish_state (
 `,
 	// 2: soft delete for organisations.
 	`ALTER TABLE orgs ADD COLUMN deleted_at INTEGER;`,
+	// 3: OAuth 2.1 authorization server for the MCP endpoint
+	// (spec/control.md §13). Authorization codes, access tokens and refresh
+	// tokens are stored as SHA-256 only, like session cookies and sk_ keys.
+	`
+-- A client is either registered dynamically (RFC 7591, kind 'dcr', random
+-- client_id) or described by a Client ID Metadata Document (kind 'cimd',
+-- client_id is the document's HTTPS URL; the row is a cache of the last
+-- successful fetch). Every client is public: there are no client secrets.
+CREATE TABLE oauth_clients (
+  client_id     TEXT    PRIMARY KEY,
+  kind          TEXT    NOT NULL CHECK (kind IN ('dcr','cimd')),
+  name          TEXT    NOT NULL,
+  client_uri    TEXT    NOT NULL DEFAULT '',
+  redirect_uris TEXT    NOT NULL,
+  created_at    INTEGER NOT NULL,
+  fetched_at    INTEGER NOT NULL DEFAULT 0,
+  fresh_until   INTEGER NOT NULL DEFAULT 0,
+  last_used_at  INTEGER NOT NULL
+);
+CREATE INDEX oauth_clients_kind ON oauth_clients(kind, last_used_at);
+
+-- One row per approval on the consent screen: "this client may act as this
+-- user with these scopes". Tokens hang off the grant, so revoking it (or
+-- deleting the user) ends every token at once.
+CREATE TABLE oauth_grants (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  client_id     TEXT    NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  scopes        TEXT    NOT NULL,
+  resource      TEXT    NOT NULL,
+  created_at    INTEGER NOT NULL,
+  expires_at    INTEGER NOT NULL,
+  last_used_at  INTEGER,
+  revoked_at    INTEGER,
+  revoke_reason TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX oauth_grants_user ON oauth_grants(user_id);
+CREATE INDEX oauth_grants_client ON oauth_grants(client_id);
+
+-- One-time authorization codes. grant_id is set when the code is redeemed,
+-- so that a second redemption can revoke what the first one obtained.
+CREATE TABLE oauth_codes (
+  code_hash      TEXT    PRIMARY KEY,
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  client_id      TEXT    NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  redirect_uri   TEXT    NOT NULL,
+  code_challenge TEXT    NOT NULL,
+  scopes         TEXT    NOT NULL,
+  resource       TEXT    NOT NULL,
+  created_at     INTEGER NOT NULL,
+  expires_at     INTEGER NOT NULL,
+  used_at        INTEGER,
+  grant_id       INTEGER REFERENCES oauth_grants(id) ON DELETE SET NULL
+);
+CREATE INDEX oauth_codes_expiry ON oauth_codes(expires_at);
+
+-- used_at marks a refresh token that has been rotated: presenting it again
+-- is treated as theft and revokes the grant.
+CREATE TABLE oauth_tokens (
+  hash       TEXT    PRIMARY KEY,
+  grant_id   INTEGER NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+  kind       TEXT    NOT NULL CHECK (kind IN ('access','refresh')),
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at    INTEGER
+);
+CREATE INDEX oauth_tokens_grant ON oauth_tokens(grant_id);
+CREATE INDEX oauth_tokens_expiry ON oauth_tokens(expires_at);
+`,
 }
 
 func (d *DB) migrate(ctx context.Context) error {
