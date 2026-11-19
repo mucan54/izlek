@@ -112,7 +112,7 @@ Veri sentetiktir (küçük event'ler); gerçek veride `b` ve `w` farklı çıkar
 
 ## 6. Bilinen kusurlar ve sınırlar
 
-1. **Çift sayım penceresi** (`spec/query.md` §10): saati 5 sn'den fazla kaymış bir cihazın, ilk denemesi kalıcı olmuş bir batch'i başka bir node'a yeniden göndermesi, compaction'a kadar çift sayılır.
+1. **Farklı `ts`'li kopyalar** (`spec/query.md` §10): sorgu artık compaction'la aynı kuralı uygular (kişi başına `uuid`), dolayısıyla sayımlar compaction öncesi ve sonrası aynıdır. Kalan sınır durumu: saati kaymış bir cihazın yeniden gönderdiği event'in iki kopyası bir zaman filtresinin ya da `/q/events` imlecinin iki yanına düşerse, compaction'a kadar geç kopya ayrıca görünür.
 2. **Kimlik yeniden yazımı pahalı** (yukarıda #3): çok `identify` alan canlı projelerde funnel/tekil sayım, compaction arayı kapatana dek yavaşlar.
 3. **Kapatılan projenin WAL kopyaları** WAL saklama süresi (varsayılan 30 gün) dolana dek depoda kalır; diğer her şey ilk compactor turunda silinir.
 4. **Tombstone'lu kişinin replay nesneleri** compactor silene dek depoda durur (listelenemez, ama anahtarı bilen proje anahtarı sahibi indirebilir).

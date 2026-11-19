@@ -159,9 +159,11 @@ Sonuç önbelleği anahtarı = `sha256(proje ‖ uç ‖ kanonik istek JSON'u �
 
 ## 10. Tekilleştirme
 
-Aynı `uuid`, compaction öncesinde birden çok dosyada bulunabilir (node'lar arası yeniden gönderim, plan yeniden yürütme). Sorgu katmanı bir günün dosya sayısı > 1 ise o günü `(person_key, ts, uuid)` sıralı birleştirir ve **bitişik eşit `(person_key, ts, uuid)`** satırlarından yalnızca birini geçirir. Tek dosyalı günlerde (L2) ek maliyet yoktur.
+Aynı `uuid`, compaction öncesinde birden çok dosyada bulunabilir (node'lar arası yeniden gönderim, plan yeniden yürütme). Sorgu katmanı bir günün okunan akış sayısı > 1 ise o günü `(person_key, ts, uuid)` sıralı birleştirir ve **aynı kişinin daha önce görülmüş bir `uuid`'sini taşıyan satırları atar**; sıra gereği kalan kopya en erken `ts`'lidir. Bu, compaction'ın uyguladığı kuralın aynısıdır: bir gün compaction'dan önce ve sonra aynı okunur. Tek dosyalı günlerde (L2) ek maliyet yoktur; bellek kullanımı bir kişinin o gündeki satır sayısıyla sınırlıdır.
 
-**Bilinen sınır.** Compaction daha güçlü bir kural uygular: bir kişinin aynı gündeki satırlarında aynı `uuid`'yi taşıyanlardan yalnızca en erken `ts`'li kalır. Aynı `uuid` iki dosyaya **farklı `ts`** ile yazılmışsa sorgu, compaction'a kadar ikisini de sayar. Bu yalnızca şu üç koşul birlikteyken olur: cihaz saati 5 sn'den fazla kaymış (`wire.md` §5 düzeltmesi devrede), batch'in ilk gönderimi kalıcı olmuş ama yanıtı istemciye ulaşmamış, ve yeniden gönderim ingestion'ın `batch_id` LRU'suna takılmamış (başka node, süresi dolmuş kayıt). Düzeltilmiş `ts` iki denemede birkaç ms farklı çıkar. Sıcak günlerde L0 → L1 compaction'ı farkı kendiliğinden kapatır.
+Kopyalar çoğunlukla bire bir aynıdır. Farklı `ts` taşıyan kopya yalnızca şu üç koşul birlikteyken oluşur: cihaz saati 5 sn'den fazla kaymış (`wire.md` §5 düzeltmesi devrede), batch'in ilk gönderimi kalıcı olmuş ama yanıtı istemciye ulaşmamış, ve yeniden gönderim ingestion'ın `batch_id` LRU'suna takılmamış (başka node, süresi dolmuş kayıt). Düzeltilmiş `ts` iki denemede birkaç ms farklı çıkar.
+
+**Bilinen sınır.** Satır filtreleri tekilleştirmeden **önce** uygulanır (dosya ve sayfa budaması için). `ts`'ye bağlı bir koşul farklı `ts`'li iki kopyayı ayırırsa geç kopya tek başına kalır ve görünür. Bu yalnızca compaction öncesinde ve şu durumlarda olur: gün içi (RFC 3339) `from`/`to` sınırı tam iki kopyanın arasına düşerse event aralığa geç `ts`'iyle girer; `/q/events` sayfalamasında imleç iki kopyanın arasına düşerse event sonraki sayfada bir kez daha listelenir. Gün sınırlı aralıklar, trend kovaları, funnel ve retention etkilenmez. İki kopya farklı UTC günlerine düşerse (gece yarısı çevresinde birkaç ms) compaction da birleştirmez.
 
 ## 11. Netleştirmeler (uygulamanın seçtiği davranışlar)
 

@@ -133,6 +133,30 @@ async fn duplicate_uuids_across_files_are_collapsed() {
     assert_eq!(n, 3);
 }
 
+/// A batch re-sent by a device with a skewed clock gets a slightly different
+/// corrected `ts` on its second trip (`spec/wire.md` §5). Compaction keeps the
+/// earliest copy per person and uuid; an uncompacted day must read the same.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resent_copy_with_a_different_timestamp_is_collapsed() {
+    let store = Store::memory();
+    let d = day_ms(DAY1);
+    let first = ev("x", Some("1"), d + 100, "pay").uuid(910);
+    let again = ev("x", Some("1"), d + 104, "pay").uuid(910);
+    let between = ev("x", Some("1"), d + 102, "view").uuid(911);
+    // Another person may carry the same uuid (ids are only unique per person stream).
+    let other = ev("y", Some("2"), d + 104, "pay").uuid(910);
+    add_file(&store, FileSpec::l0(P, DAY1, "f1"), vec![first.clone(), between.clone()]).await;
+    add_file(&store, FileSpec::l0(P, DAY1, "f2"), vec![again.clone(), other.clone()]).await;
+    add_file(&store, FileSpec::l0(P, DAY1, "f3"), vec![again.clone()]).await;
+    let engine = engine(&store).await;
+    let cx = cx(&engine, DAY1, DAY1).await;
+    for ordered in [true, false] {
+        let req = ScanRequest { exprs: cols(&["person_key", "ts", "event"]), filters: vec![], ordered };
+        let got = triples(&collect(&cx, &req).await, d);
+        assert_eq!(got, [t("u:1", 100, "pay"), t("u:1", 102, "view"), t("u:2", 104, "pay")], "ordered={ordered}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn identity_links_newer_than_a_file_rewrite_and_resort_its_rows() {
     let store = Store::memory();

@@ -57,7 +57,7 @@ use la_core::identity::IdentityMap;
 use la_core::manifest::{DayManifest, FileEntry};
 use la_core::schema::events_schema;
 use la_core::time;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -249,8 +249,10 @@ impl ScalarUDFImpl for IdentityFn {
 // Dedupe
 // ---------------------------------------------------------------------------
 
-/// Drops rows whose `(person_key, ts, uuid)` equals the previous row's
-/// (`spec/query.md` §10). Input: one partition sorted on those columns.
+/// Drops rows that repeat the `uuid` of an earlier row of the same person
+/// (`spec/query.md` §10) — the rule compaction applies, so a day reads the
+/// same before and after it is compacted. Input: one partition sorted on
+/// `(person_key, ts, uuid)`, hence the copy that stays is the earliest.
 #[derive(Debug)]
 pub struct DedupExec {
     input: Arc<dyn ExecutionPlan>,
@@ -277,42 +279,38 @@ impl DisplayAs for DedupExec {
     }
 }
 
-/// Key of the last row seen, carried across batch boundaries.
+/// The person the stream is currently in and the uuids seen for them,
+/// carried across batch boundaries. Bounded by one person's rows in a day.
 #[derive(Default)]
-struct LastKey {
+struct Seen {
     person: String,
-    ts: i64,
-    uuid: Vec<u8>,
+    uuids: HashSet<[u8; 16]>,
     set: bool,
 }
 
-fn dedup_batch(batch: RecordBatch, key: [usize; 3], last: &mut LastKey) -> Result<RecordBatch> {
+fn dedup_batch(batch: RecordBatch, key: [usize; 3], seen: &mut Seen) -> Result<RecordBatch> {
     let n = batch.num_rows();
     if n == 0 {
         return Ok(batch);
     }
     let person = batch.column(key[0]).as_string::<i32>();
-    let ts = batch.column(key[1]).as_primitive::<arrow::datatypes::TimestampMillisecondType>();
     let uuid = batch.column(key[2]).as_fixed_size_binary();
-    let same = |i: usize, j: usize| {
-        ts.value(i) == ts.value(j) && uuid.value(i) == uuid.value(j) && person.value(i) == person.value(j)
-    };
-    let first_dup =
-        last.set && ts.value(0) == last.ts && uuid.value(0) == last.uuid.as_slice() && person.value(0) == last.person;
-    let mut dups = usize::from(first_dup);
+    let mut dups = 0usize;
     let mut keep = BooleanBuilder::with_capacity(n);
-    keep.append_value(!first_dup);
-    for i in 1..n {
-        let d = same(i, i - 1);
-        dups += usize::from(d);
-        keep.append_value(!d);
+    for i in 0..n {
+        let p = person.value(i);
+        if !seen.set || p != seen.person {
+            seen.person.clear();
+            seen.person.push_str(p);
+            seen.uuids.clear();
+            seen.set = true;
+        }
+        let mut id = [0u8; 16];
+        id.copy_from_slice(uuid.value(i));
+        let fresh = seen.uuids.insert(id);
+        dups += usize::from(!fresh);
+        keep.append_value(fresh);
     }
-    last.person.clear();
-    last.person.push_str(person.value(n - 1));
-    last.ts = ts.value(n - 1);
-    last.uuid.clear();
-    last.uuid.extend_from_slice(uuid.value(n - 1));
-    last.set = true;
     if dups == 0 {
         return Ok(batch);
     }
@@ -345,9 +343,9 @@ impl ExecutionPlan for DedupExec {
     fn execute(&self, partition: usize, context: Arc<TaskContext>) -> Result<SendableRecordBatchStream> {
         let input = self.input.execute(partition, context)?;
         let key = self.key;
-        let mut last = LastKey::default();
+        let mut seen = Seen::default();
         let stream = input
-            .map(move |b| dedup_batch(b?, key, &mut last))
+            .map(move |b| dedup_batch(b?, key, &mut seen))
             .try_filter(|b| futures::future::ready(b.num_rows() > 0));
         Ok(Box::pin(RecordBatchStreamAdapter::new(self.schema(), stream)))
     }
