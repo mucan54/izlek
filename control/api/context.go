@@ -97,6 +97,42 @@ type reqCtx struct {
 	// Exactly one of session and key is set on authenticated routes.
 	session *db.Session
 	key     *db.Key
+	// via is set for a tool call that arrived through the MCP endpoint. The
+	// caller is still a key or a user (for an OAuth access token, session
+	// holds that user without a cookie behind it); via only adds to audit
+	// entries how the request got here.
+	via *mcpVia
+}
+
+// mcpVia describes the MCP tool call a handler runs for.
+type mcpVia struct {
+	Tool string
+	// OAuth client the user authorised; empty for sk_ keys.
+	ClientID   string
+	ClientName string
+	GrantID    int64
+}
+
+// annotate adds the MCP origin of a change to an audit detail.
+func (v *mcpVia) annotate(detail any) any {
+	via := map[string]any{"mcp_tool": v.Tool}
+	if v.ClientID != "" {
+		via["oauth_client"] = v.ClientName
+		via["oauth_client_id"] = v.ClientID
+		via["oauth_grant"] = v.GrantID
+	}
+	out := map[string]any{}
+	switch d := detail.(type) {
+	case nil:
+	case map[string]any:
+		for k, val := range d {
+			out[k] = val
+		}
+	default:
+		out["detail"] = d
+	}
+	out["via"] = via
+	return out
 }
 
 func (c *reqCtx) ctx() context.Context { return c.r.Context() }
@@ -144,6 +180,23 @@ func bearerToken(r *http.Request) (string, bool) {
 	return strings.TrimSpace(h[7:]), true
 }
 
+// sessionFromCookie returns the live session named by the la_session cookie
+// and the cookie's value, or nil when there is none.
+func (s *Server) sessionFromCookie(r *http.Request, now time.Time) (*db.Session, string, error) {
+	ck, err := r.Cookie(sessionCookie)
+	if err != nil || len(ck.Value) != 64 {
+		return nil, "", nil
+	}
+	sess, err := db.SessionByHash(r.Context(), s.db.R(), auth.HashSecret(ck.Value), now.UnixMilli())
+	if errors.Is(err, db.ErrNotFound) {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	return &sess, ck.Value, nil
+}
+
 func (c *reqCtx) authenticate(mode authMode) error {
 	r := c.r
 	if token, ok := bearerToken(r); ok {
@@ -158,18 +211,14 @@ func (c *reqCtx) authenticate(mode authMode) error {
 		}
 		return nil
 	}
-	ck, err := r.Cookie(sessionCookie)
-	if err != nil || len(ck.Value) != 64 {
-		return errUnauthorized()
-	}
-	hash := auth.HashSecret(ck.Value)
-	sess, err := db.SessionByHash(c.ctx(), c.s.db.R(), hash, c.nowMs())
-	if errors.Is(err, db.ErrNotFound) {
-		return errUnauthorized()
-	}
+	found, cookieValue, err := c.s.sessionFromCookie(r, c.now)
 	if err != nil {
 		return err
 	}
+	if found == nil {
+		return errUnauthorized()
+	}
+	sess, hash := *found, found.IDHash
 	if !isSafeMethod(r.Method) {
 		got := r.Header.Get(csrfHeader)
 		if crossSite(r) || subtle.ConstantTimeCompare([]byte(got), []byte(sess.CSRF)) != 1 {
@@ -184,7 +233,7 @@ func (c *reqCtx) authenticate(mode authMode) error {
 			return err
 		}
 		sess.ExpiresAt = want
-		c.s.setSessionCookie(c.w, ck.Value)
+		c.s.setSessionCookie(c.w, cookieValue)
 	}
 	return nil
 }
@@ -193,24 +242,9 @@ func (c *reqCtx) authenticate(mode authMode) error {
 // an admin-scoped key may use the endpoints under its own project and
 // nothing else. No cookie, no CSRF token.
 func (c *reqCtx) authenticateKey(mode authMode, token string) error {
-	deny := func() error {
-		c.s.mKeyAuth.Inc()
-		return errCode(http.StatusUnauthorized, "unauthorized", "Geçersiz API anahtarı")
-	}
-	if !auth.LooksLikeSecretKey(token) {
-		return deny()
-	}
-	key, err := db.KeyByHash(c.ctx(), c.s.db.R(), auth.HashSecret(token))
-	if errors.Is(err, db.ErrNotFound) {
-		return deny()
-	}
+	key, err := c.s.adminKey(c.ctx(), token, c.info)
 	if err != nil {
 		return err
-	}
-	c.info.actor = db.KeyActor(key.ID).String()
-	if !key.HasScope("admin") {
-		c.s.mKeyAuth.Inc()
-		return errCode(http.StatusForbidden, "forbidden", "Bu API anahtarının yönetim (admin) kapsamı yok")
 	}
 	if mode != authProject {
 		return errCode(http.StatusForbidden, "forbidden", "API anahtarları yalnızca kendi projelerinin uçlarını kullanabilir")
@@ -219,15 +253,45 @@ func (c *reqCtx) authenticateKey(mode authMode, token string) error {
 	if pid, ok := parseProjectID(c.params["pid"]); !ok || pid != key.ProjectID {
 		return errNotFound()
 	}
-	c.key = &key
-	// last_used_at is advisory; keep it to one write a minute per key.
-	if key.LastUsedAt == nil || c.nowMs()-*key.LastUsedAt > time.Minute.Milliseconds() {
-		now := c.nowMs()
-		if err := c.s.db.Write(c.ctx(), func(tx *sql.Tx) error { return db.TouchKey(c.ctx(), tx, key.ID, now) }); err != nil {
-			c.s.log.Warn("cannot record key use", "key", key.ID, "err", err.Error())
+	c.key = key
+	c.s.touchKey(c.ctx(), key, c.now)
+	return nil
+}
+
+// adminKey resolves an sk_ secret to its key and checks that it carries the
+// admin scope: the one rule for key access shared by the management API and
+// the MCP endpoint. It records the actor for the request log.
+func (s *Server) adminKey(ctx context.Context, token string, info *requestInfo) (*db.Key, error) {
+	deny := func() error {
+		s.mKeyAuth.Inc()
+		return errCode(http.StatusUnauthorized, "unauthorized", "Geçersiz API anahtarı")
+	}
+	if !auth.LooksLikeSecretKey(token) {
+		return nil, deny()
+	}
+	key, err := db.KeyByHash(ctx, s.db.R(), auth.HashSecret(token))
+	if errors.Is(err, db.ErrNotFound) {
+		return nil, deny()
+	}
+	if err != nil {
+		return nil, err
+	}
+	info.actor = db.KeyActor(key.ID).String()
+	if !key.HasScope("admin") {
+		s.mKeyAuth.Inc()
+		return nil, errCode(http.StatusForbidden, "forbidden", "Bu API anahtarının yönetim (admin) kapsamı yok")
+	}
+	return &key, nil
+}
+
+// touchKey records that a key was used. last_used_at is advisory; it is
+// kept to one write a minute per key.
+func (s *Server) touchKey(ctx context.Context, key *db.Key, now time.Time) {
+	if nowMs := now.UnixMilli(); key.LastUsedAt == nil || nowMs-*key.LastUsedAt > time.Minute.Milliseconds() {
+		if err := s.db.Write(ctx, func(tx *sql.Tx) error { return db.TouchKey(ctx, tx, key.ID, nowMs) }); err != nil {
+			s.log.Warn("cannot record key use", "key", key.ID, "err", err.Error())
 		}
 	}
-	return nil
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, value string) {
@@ -247,8 +311,12 @@ func (s *Server) clearSessionCookie(w http.ResponseWriter) {
 // openSession creates a session for userID inside tx and returns the cookie
 // value to set once the transaction has committed.
 func (c *reqCtx) openSession(tx *sql.Tx, userID int64) (string, error) {
+	return openSession(c.ctx(), tx, userID, c.now)
+}
+
+func openSession(ctx context.Context, tx *sql.Tx, userID int64, now time.Time) (string, error) {
 	cookie, hash := auth.NewSessionID()
-	err := db.CreateSession(c.ctx(), tx, hash, userID, auth.NewCSRFToken(), c.nowMs(), c.now.Add(sessionTTL).UnixMilli())
+	err := db.CreateSession(ctx, tx, hash, userID, auth.NewCSRFToken(), now.UnixMilli(), now.Add(sessionTTL).UnixMilli())
 	return cookie, err
 }
 
@@ -476,5 +544,8 @@ func (s *Server) clientIP(r *http.Request) string {
 // audit appends an audit entry inside a write transaction.
 func (c *reqCtx) audit(tx *sql.Tx, orgID int64, action, target string, detail any) error {
 	c.s.mAudit.Inc()
+	if c.via != nil {
+		detail = c.via.annotate(detail)
+	}
 	return db.InsertAudit(c.ctx(), tx, c.nowMs(), orgID, c.actor(), action, target, detail)
 }

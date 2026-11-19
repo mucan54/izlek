@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mucan54/izlek/control/auth"
 	"github.com/mucan54/izlek/control/db"
@@ -118,42 +120,55 @@ func (s *Server) login(c *reqCtx) (any, error) {
 	if err := c.decode(&in); err != nil {
 		return nil, err
 	}
-	email := strings.ToLower(strings.TrimSpace(in.Email))
-	if len(email) > 254 {
-		email = email[:254]
-	}
-	ip := s.clientIP(c.r)
-	pairKey, ipKey := ip+"\x00"+email, ip
-	if blocked, wait := s.loginPair.Blocked(pairKey); blocked {
-		s.mLogins.With("rate_limited").Inc()
-		return nil, rateLimited(wait.Seconds())
-	}
-	if blocked, wait := s.loginIP.Blocked(ipKey); blocked {
-		s.mLogins.With("rate_limited").Inc()
-		return nil, rateLimited(wait.Seconds())
-	}
-	fail := func(result string, e *apiError) (any, error) {
-		s.loginPair.Add(pairKey)
-		s.loginIP.Add(ipKey)
-		s.mLogins.With(result).Inc()
-		return nil, e
-	}
-	badCredentials := errInvalidCredentials(http.StatusUnauthorized, "E-posta ya da parola hatalı")
-
-	user, err := db.UserByEmail(c.ctx(), s.db.R(), email)
-	if errors.Is(err, db.ErrNotFound) {
-		// Same cost as a real check: timing must not reveal which
-		// addresses have an account.
-		s.hasher.VerifyDummy(c.ctx(), in.Password)
-		return fail("invalid_credentials", badCredentials)
-	}
+	cookie, err := s.passwordLogin(c.ctx(), s.clientIP(c.r), c.now, in.Email, in.Password, string(in.TOTP))
 	if err != nil {
 		return nil, err
 	}
-	ok, rehash, err := s.hasher.Verify(c.ctx(), user.PasswordHash, in.Password)
+	s.setSessionCookie(c.w, cookie)
+	return okBody, nil
+}
+
+// passwordLogin checks an e-mail address, a password and, for accounts with
+// a second factor, a TOTP code, and opens a session; it returns the value of
+// the session cookie. It is the one implementation of signing in: the JSON
+// API uses it and so does the sign-in form of the OAuth consent page, so
+// both share the throttle, the timing behaviour and the audit entry.
+func (s *Server) passwordLogin(ctx context.Context, ip string, now time.Time, emailIn, password, totp string) (string, error) {
+	email := strings.ToLower(strings.TrimSpace(emailIn))
+	if len(email) > 254 {
+		email = email[:254]
+	}
+	pairKey, ipKey := ip+"\x00"+email, ip
+	if blocked, wait := s.loginPair.Blocked(pairKey); blocked {
+		s.mLogins.With("rate_limited").Inc()
+		return "", rateLimited(wait.Seconds())
+	}
+	if blocked, wait := s.loginIP.Blocked(ipKey); blocked {
+		s.mLogins.With("rate_limited").Inc()
+		return "", rateLimited(wait.Seconds())
+	}
+	fail := func(result string, e *apiError) (string, error) {
+		s.loginPair.Add(pairKey)
+		s.loginIP.Add(ipKey)
+		s.mLogins.With(result).Inc()
+		return "", e
+	}
+	badCredentials := errInvalidCredentials(http.StatusUnauthorized, "E-posta ya da parola hatalı")
+
+	user, err := db.UserByEmail(ctx, s.db.R(), email)
+	if errors.Is(err, db.ErrNotFound) {
+		// Same cost as a real check: timing must not reveal which
+		// addresses have an account.
+		s.hasher.VerifyDummy(ctx, password)
+		return fail("invalid_credentials", badCredentials)
+	}
 	if err != nil {
-		if c.ctx().Err() != nil {
-			return nil, c.ctx().Err()
+		return "", err
+	}
+	ok, rehash, err := s.hasher.Verify(ctx, user.PasswordHash, password)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
 		}
 		s.log.Error("stored password hash is unusable", "user", user.ID, "err", err.Error())
 		return fail("invalid_credentials", badCredentials)
@@ -163,18 +178,18 @@ func (s *Server) login(c *reqCtx) (any, error) {
 	}
 	var totpStep int64
 	if user.TOTPEnabled {
-		code := strings.TrimSpace(string(in.TOTP))
+		code := strings.TrimSpace(totp)
 		if code == "" {
 			// Not counted as a failure: this is the first half of the
 			// normal two-step login, and the password was right.
 			s.mLogins.With("totp_required").Inc()
-			return nil, errCode(http.StatusUnauthorized, "totp_required", "Doğrulama kodu gerekli")
+			return "", errCode(http.StatusUnauthorized, "totp_required", "Doğrulama kodu gerekli")
 		}
 		// A numeric JSON value loses its leading zeros.
 		if len(code) < auth.TOTPDigits {
 			code = strings.Repeat("0", auth.TOTPDigits-len(code)) + code
 		}
-		step, valid := auth.VerifyTOTP(user.TOTPSecret, code, c.now, user.TOTPLastStep)
+		step, valid := auth.VerifyTOTP(user.TOTPSecret, code, now, user.TOTPLastStep)
 		if !valid {
 			return fail("invalid_totp", errCode(http.StatusUnauthorized, "invalid_totp", "Doğrulama kodu hatalı"))
 		}
@@ -182,15 +197,15 @@ func (s *Server) login(c *reqCtx) (any, error) {
 	}
 	var newHash string
 	if rehash {
-		if newHash, err = s.hasher.Hash(c.ctx(), in.Password); err != nil {
+		if newHash, err = s.hasher.Hash(ctx, password); err != nil {
 			newHash = ""
 		}
 	}
 	var cookie string
 	replayed := false
-	err = s.db.Write(c.ctx(), func(tx *sql.Tx) error {
+	err = s.db.Write(ctx, func(tx *sql.Tx) error {
 		if totpStep != 0 {
-			fresh, err := db.AdvanceTOTPStep(c.ctx(), tx, user.ID, totpStep)
+			fresh, err := db.AdvanceTOTPStep(ctx, tx, user.ID, totpStep)
 			if err != nil {
 				return err
 			}
@@ -200,27 +215,26 @@ func (s *Server) login(c *reqCtx) (any, error) {
 			}
 		}
 		if newHash != "" {
-			if err := db.SetPassword(c.ctx(), tx, user.ID, newHash); err != nil {
+			if err := db.SetPassword(ctx, tx, user.ID, newHash); err != nil {
 				return err
 			}
 		}
 		s.mAudit.Inc()
-		if err := db.InsertAudit(c.ctx(), tx, c.nowMs(), 0, db.UserActor(user.ID), "auth.login", strconv.FormatInt(user.ID, 10), nil); err != nil {
+		if err := db.InsertAudit(ctx, tx, now.UnixMilli(), 0, db.UserActor(user.ID), "auth.login", strconv.FormatInt(user.ID, 10), nil); err != nil {
 			return err
 		}
 		var err error
-		cookie, err = c.openSession(tx, user.ID)
+		cookie, err = openSession(ctx, tx, user.ID, now)
 		return err
 	})
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if replayed {
 		return fail("invalid_totp", errCode(http.StatusUnauthorized, "invalid_totp", "Doğrulama kodu hatalı"))
 	}
-	s.setSessionCookie(c.w, cookie)
 	s.mLogins.With("ok").Inc()
-	return okBody, nil
+	return cookie, nil
 }
 
 // POST /api/auth/logout
@@ -290,11 +304,22 @@ func (s *Server) changePassword(c *reqCtx) (any, error) {
 		if err := db.SetPassword(c.ctx(), tx, uid, hash); err != nil {
 			return err
 		}
-		// Whoever else holds a session of this account is signed out.
+		// Whoever else holds a session of this account is signed out, and
+		// applications that were authorised to act for it must be approved
+		// again: a password is changed when it may have been in the wrong
+		// hands, and so may anything approved with it.
 		if err := db.DeleteOtherSessions(c.ctx(), tx, uid, c.session.IDHash); err != nil {
 			return err
 		}
-		return c.audit(tx, 0, "user.password", strconv.FormatInt(uid, 10), nil)
+		revoked, err := db.RevokeUserOAuthGrants(c.ctx(), tx, uid, c.nowMs(), "password_change")
+		if err != nil {
+			return err
+		}
+		var detail any
+		if revoked > 0 {
+			detail = map[string]any{"oauth_grants_revoked": revoked}
+		}
+		return c.audit(tx, 0, "user.password", strconv.FormatInt(uid, 10), detail)
 	})
 	if err != nil {
 		return nil, err
@@ -350,11 +375,20 @@ func (s *Server) totpEnable(c *reqCtx) (any, error) {
 		if err := db.EnableTOTP(c.ctx(), tx, u.ID, step); err != nil {
 			return err
 		}
-		// Sessions opened without the second factor end here.
+		// Sessions opened without the second factor end here, and so do
+		// the applications authorised from such sessions.
 		if err := db.DeleteOtherSessions(c.ctx(), tx, u.ID, c.session.IDHash); err != nil {
 			return err
 		}
-		return c.audit(tx, 0, "user.totp_enable", strconv.FormatInt(u.ID, 10), nil)
+		revoked, err := db.RevokeUserOAuthGrants(c.ctx(), tx, u.ID, c.nowMs(), "totp_enable")
+		if err != nil {
+			return err
+		}
+		var detail any
+		if revoked > 0 {
+			detail = map[string]any{"oauth_grants_revoked": revoked}
+		}
+		return c.audit(tx, 0, "user.totp_enable", strconv.FormatInt(u.ID, 10), detail)
 	})
 	if err != nil {
 		return nil, err

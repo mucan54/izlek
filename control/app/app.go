@@ -20,6 +20,7 @@ import (
 	"github.com/mucan54/izlek/control/config"
 	"github.com/mucan54/izlek/control/db"
 	"github.com/mucan54/izlek/control/metrics"
+	"github.com/mucan54/izlek/control/oauth"
 	"github.com/mucan54/izlek/control/publish"
 	"github.com/mucan54/izlek/golib/objstore"
 )
@@ -37,6 +38,9 @@ type Options struct {
 	QueryTransport http.RoundTripper
 	// PublishRetryMin/Max override the publisher's backoff (tests).
 	PublishRetryMin, PublishRetryMax time.Duration
+	// ClientMetadata overrides how OAuth Client ID Metadata Documents are
+	// fetched (tests).
+	ClientMetadata *oauth.Fetcher
 }
 
 // App is a running control plane minus its listeners.
@@ -99,7 +103,7 @@ func New(opt Options) (*App, error) {
 
 	srv, err := api.New(api.Options{
 		Config: opt.Config, DB: opt.DB, Notifier: a.Publisher, Hasher: opt.Hasher, Logger: opt.Logger,
-		Metrics: reg, Now: opt.Now, QueryTransport: opt.QueryTransport,
+		Metrics: reg, Now: opt.Now, QueryTransport: opt.QueryTransport, ClientMetadata: opt.ClientMetadata,
 	})
 	if err != nil {
 		return nil, err
@@ -132,6 +136,9 @@ func (a *App) Start(ctx context.Context) {
 				return err
 			}); err != nil && ctx.Err() == nil {
 				a.opt.Logger.Warn("session clean-up failed", "err", err.Error())
+			}
+			if err := a.DB.Write(ctx, func(tx *sql.Tx) error { return api.PruneOAuth(ctx, tx, a.opt.Now()) }); err != nil && ctx.Err() == nil {
+				a.opt.Logger.Warn("oauth clean-up failed", "err", err.Error())
 			}
 			select {
 			case <-ctx.Done():

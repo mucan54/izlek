@@ -1,0 +1,11 @@
+{
+  "name": "izlek-control-mcp-conformance",
+  "private": true,
+  "description": "Conformance tests for the control plane's MCP endpoint with the official MCP TypeScript clients. Client versions are pinned on purpose; bump them deliberately and re-run.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
+    "@modelcontextprotocol/sdk": "1.32.2"
+  }
+}

@@ -100,21 +100,26 @@ func (s *Server) proxyReplay(c *reqCtx) (any, error) {
 	return nil, s.forward(c, p.ID, http.MethodGet, "/q/replay?key="+url.QueryEscape(key), nil)
 }
 
-func (s *Server) forward(c *reqCtx, projectID uint32, method, pathAndQuery string, body []byte) error {
+// upstream sends one request to the query service on behalf of projectID
+// and returns its response. The caller must close the body and then call
+// the returned release function (the request's deadline covers reading the
+// body). Failures to reach the service, and its rejection of the internal
+// credential, come back as API errors.
+func (s *Server) upstream(c *reqCtx, projectID uint32, method, pathAndQuery string, body []byte) (*http.Response, func(), error) {
 	px := s.proxy
 	if px.base == "" || px.secret == "" {
 		s.mProxy.With("not_configured").Inc()
-		return errCode(http.StatusServiceUnavailable, "query_not_configured", "Sorgu servisi yapılandırılmamış")
+		return nil, nil, errCode(http.StatusServiceUnavailable, "query_not_configured", "Sorgu servisi yapılandırılmamış")
 	}
 	ctx, cancel := context.WithTimeout(c.ctx(), px.timeout)
-	defer cancel()
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, px.base+pathAndQuery, rd)
 	if err != nil {
-		return err
+		cancel()
+		return nil, nil, err
 	}
 	for _, h := range proxyRequestHeaders {
 		if v := c.r.Header.Get(h); v != "" {
@@ -130,29 +135,46 @@ func (s *Server) forward(c *reqCtx, projectID uint32, method, pathAndQuery strin
 
 	resp, err := px.client.Do(req)
 	if err != nil {
+		cancel()
 		if c.ctx().Err() != nil { // the client went away
 			s.mProxy.With("client_gone").Inc()
-			return c.ctx().Err()
+			return nil, nil, c.ctx().Err()
 		}
 		var ne net.Error
 		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()) {
 			s.mProxy.With("timeout").Inc()
-			return errCode(http.StatusGatewayTimeout, "upstream_timeout", "Sorgu servisi zamanında yanıt vermedi")
+			return nil, nil, errCode(http.StatusGatewayTimeout, "upstream_timeout", "Sorgu servisi zamanında yanıt vermedi")
 		}
 		s.mProxy.With("unavailable").Inc()
 		s.log.Warn("query service unreachable", "req_id", c.info.id, "err", err.Error())
-		return errCode(http.StatusBadGateway, "upstream_unavailable", "Sorgu servisine ulaşılamıyor")
+		return nil, nil, errCode(http.StatusBadGateway, "upstream_unavailable", "Sorgu servisine ulaşılamıyor")
 	}
-	defer resp.Body.Close()
 
 	// 401 from the query service is about the control plane's own
 	// credential, never about the user: passing it on would make the UI
 	// believe the session ended.
 	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		cancel()
 		s.mProxy.With("upstream_auth").Inc()
 		s.log.Error("query service rejected the internal credential; check LA_QUERY_INTERNAL_SECRET on both sides", "req_id", c.info.id)
-		return errCode(http.StatusBadGateway, "upstream_auth", "Sorgu servisi iç kimlik bilgisini reddetti")
+		return nil, nil, errCode(http.StatusBadGateway, "upstream_auth", "Sorgu servisi iç kimlik bilgisini reddetti")
 	}
+	if resp.StatusCode >= 500 {
+		s.mProxy.With("upstream_error").Inc()
+	} else {
+		s.mProxy.With("ok").Inc()
+	}
+	return resp, cancel, nil
+}
+
+func (s *Server) forward(c *reqCtx, projectID uint32, method, pathAndQuery string, body []byte) error {
+	resp, release, err := s.upstream(c, projectID, method, pathAndQuery, body)
+	if err != nil {
+		return err
+	}
+	defer release()
+	defer resp.Body.Close()
 
 	h := c.w.Header()
 	for _, name := range proxyResponseHeaders {
@@ -167,13 +189,8 @@ func (s *Server) forward(c *reqCtx, projectID uint32, method, pathAndQuery strin
 			h.Set("Cache-Control", "no-store")
 		}
 	}
-	_ = http.NewResponseController(c.w).SetWriteDeadline(time.Now().Add(px.timeout + 30*time.Second))
+	_ = http.NewResponseController(c.w).SetWriteDeadline(time.Now().Add(s.proxy.timeout + 30*time.Second))
 	c.w.WriteHeader(resp.StatusCode)
-	if resp.StatusCode >= 500 {
-		s.mProxy.With("upstream_error").Inc()
-	} else {
-		s.mProxy.With("ok").Inc()
-	}
 	if _, err := io.Copy(c.w, resp.Body); err != nil {
 		// Headers are out; the only honest signal left is a broken stream.
 		s.log.Warn("query proxy stream interrupted", "req_id", c.info.id, "err", err.Error())

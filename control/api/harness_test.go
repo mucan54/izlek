@@ -101,6 +101,12 @@ type envOption func(*config.Config)
 // explicitly with e.publish() so that nothing depends on timing.
 func newEnv(t *testing.T, opts ...envOption) *env {
 	t.Helper()
+	return newEnvWith(t, nil, opts...)
+}
+
+// newEnvWith is newEnv with a hook to adjust the application's options.
+func newEnvWith(t *testing.T, appOpt func(*app.Options), opts ...envOption) *env {
+	t.Helper()
 	ctx := context.Background()
 	d, err := db.Open(ctx, filepath.Join(t.TempDir(), "control.db"))
 	if err != nil {
@@ -135,11 +141,15 @@ func newEnv(t *testing.T, opts ...envOption) *env {
 		o(&cfg)
 	}
 	clk := &clock{t: time.UnixMilli(1_795_046_400_000)}
-	a, err := app.New(app.Options{
+	appOptions := app.Options{
 		Config: cfg, DB: d, Store: store, Now: clk.Now,
 		// Cheap argon2 parameters: the tests create dozens of users.
 		Hasher: auth.NewHasher(auth.Params{MemoryKiB: 64, Time: 1, Threads: 1}, 4),
-	})
+	}
+	if appOpt != nil {
+		appOpt(&appOptions)
+	}
+	a, err := app.New(appOptions)
 	if err != nil {
 		t.Fatal(err)
 	}

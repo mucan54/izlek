@@ -20,7 +20,9 @@ import (
 	"github.com/mucan54/izlek/control/auth"
 	"github.com/mucan54/izlek/control/config"
 	"github.com/mucan54/izlek/control/db"
+	"github.com/mucan54/izlek/control/mcp"
 	"github.com/mucan54/izlek/control/metrics"
+	"github.com/mucan54/izlek/control/oauth"
 )
 
 // Notifier is told about every committed change (the publisher).
@@ -42,6 +44,9 @@ type Options struct {
 	// QueryTransport overrides the transport used to reach the query
 	// service (tests).
 	QueryTransport http.RoundTripper
+	// ClientMetadata overrides how OAuth Client ID Metadata Documents are
+	// fetched (tests serve them from a local listener).
+	ClientMetadata *oauth.Fetcher
 }
 
 // Server implements http.Handler.
@@ -61,6 +66,21 @@ type Server struct {
 	loginPair *auth.Limiter // failed logins per (IP, e-mail)
 	loginIP   *auth.Limiter // failed logins per IP
 	reauth    *auth.Limiter // failed password confirmations per user
+
+	// MCP endpoint and the OAuth server in front of it.
+	mcp                 *mcp.Handler
+	tools               []*tool
+	toolIndex           map[string]*tool
+	cimd                *oauth.Fetcher
+	cimdNegative        negativeCache
+	oauthRegisterLimit  *auth.Limiter // client registrations per IP
+	oauthTokenLimit     *auth.Limiter // token and revocation requests per IP
+	oauthTokenFailLimit *auth.Limiter // failed token requests per IP
+	oauthFetchLimit     *auth.Limiter // client metadata fetches per user
+	mcpAuthFailLimit    *auth.Limiter // rejected bearer credentials per IP
+	mcpCallLimit        *auth.Limiter // tool calls per key or grant
+	mMCP                *metrics.CounterVec
+	mOAuth              *metrics.CounterVec
 
 	mRequests   *metrics.CounterVec
 	mDuration   *metrics.Histogram
@@ -113,7 +133,31 @@ func New(opt Options) (*Server, error) {
 	s.mProxy = s.reg.CounterVec("query_proxy_requests_total", "Query proxy requests by outcome.", "result")
 	s.mAudit = s.reg.Counter("audit_entries_total", "Audit log entries written.")
 	s.mKeyAuth = s.reg.Counter("key_auth_failures_total", "Requests with an unknown or insufficient secret key.")
+	s.mMCP = s.reg.CounterVec("mcp_requests_total", "MCP requests by outcome: ok, tool_error, error (protocol error), or a rejection before the protocol layer (unauthenticated, invalid_token, forbidden, insufficient_scope, origin_rejected).", "result")
+	s.mOAuth = s.reg.CounterVec("oauth_events_total", "OAuth server events: register, authorize_approved, authorize_denied, authorize_rejected, token_issued, revoke, and authorize_/token_ followed by an OAuth error code.", "event")
 	s.proxy = newQueryProxy(opt.Config, opt.QueryTransport)
+
+	s.oauthRegisterLimit = auth.NewLimiter(oauthRegisterMax, oauthRegisterWindow, opt.Now)
+	s.oauthTokenLimit = auth.NewLimiter(oauthTokenMax, time.Minute, opt.Now)
+	s.oauthTokenFailLimit = auth.NewLimiter(oauthTokenFailMax, time.Minute, opt.Now)
+	s.oauthFetchLimit = auth.NewLimiter(oauthFetchMax, time.Minute, opt.Now)
+	s.mcpAuthFailLimit = auth.NewLimiter(mcpAuthFailMax, time.Minute, opt.Now)
+	s.mcpCallLimit = auth.NewLimiter(mcpCallMax, time.Minute, opt.Now)
+	s.cimd = opt.ClientMetadata
+	if s.cimd == nil {
+		s.cimd = &oauth.Fetcher{}
+	}
+	s.toolIndex = map[string]*tool{}
+	s.registerTools()
+	s.mcp = &mcp.Handler{
+		Info:         mcp.Implementation{Name: "izlek", Title: "izlek product analytics", Version: mcpServerVersion},
+		Instructions: mcpInstructions,
+		Backend:      mcpBackend{s},
+		MaxBodyBytes: maxBodyBytes,
+		Observe: func(_ *http.Request, _, _, outcome string) {
+			s.mMCP.With(outcome).Inc()
+		},
+	}
 	if opt.Config.UIDir != "" {
 		ui, err := newStaticUI(opt.Config.UIDir)
 		if err != nil {
@@ -188,6 +232,9 @@ func (s *Server) registerRoutes() {
 	s.handle("POST", "/api/me/totp/begin", authSession, s.totpBegin)
 	s.handle("POST", "/api/me/totp/enable", authSession, s.totpEnable)
 	s.handle("POST", "/api/me/totp/disable", authSession, s.totpDisable)
+	// §13 applications the user connected through OAuth
+	s.handle("GET", "/api/me/connected-apps", authSession, s.listConnectedApps)
+	s.handle("DELETE", "/api/me/connected-apps/:id", authSession, s.revokeConnectedApp)
 	// §2 organisations
 	s.handle("GET", "/api/orgs/:org/members", authSession, s.listMembers)
 	s.handle("POST", "/api/orgs/:org/members", authSession, s.addMember)
@@ -365,6 +412,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case path == "/api" || strings.HasPrefix(path, "/api/"):
 		s.securityHeaders(sw.Header(), cspAPI)
 		s.serveAPI(sw, r, info)
+	case s.cfg.MCPEnabled && path == "/mcp":
+		s.securityHeaders(sw.Header(), cspAPI)
+		s.serveMCP(sw, r, info)
+	case s.cfg.MCPEnabled && strings.HasPrefix(path, "/.well-known/"):
+		s.securityHeaders(sw.Header(), cspAPI)
+		s.serveWellKnown(sw, r, info)
+	case s.cfg.MCPEnabled && (path == "/oauth" || strings.HasPrefix(path, "/oauth/")):
+		// The sign-in and consent pages replace this policy with their own.
+		s.securityHeaders(sw.Header(), cspAPI)
+		s.serveOAuth(sw, r, info)
 	default:
 		info.route, info.quiet = "static", true
 		if s.ui == nil {
@@ -431,6 +488,9 @@ type requestInfo struct {
 	project uint32
 	quiet   bool
 }
+
+// mcpServerVersion is what the MCP endpoint reports about itself.
+const mcpServerVersion = "0.1.0"
 
 // apiWriteTimeout bounds how long an ordinary response may take to write;
 // the query proxy sets its own, longer deadline.

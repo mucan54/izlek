@@ -403,6 +403,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// header (2026-07-28, Streamable HTTP, "Server Validation").
 		h.fail(w, r, http.StatusBadRequest, id, method, headerMismatch("the MCP-Protocol-Version header is required"))
 		return
+	case hasBodyVersion && bodyVersion != headerVersion:
+		// Whatever the two values are: a proxy routing on the header and
+		// this server acting on the body must not disagree.
+		h.fail(w, r, http.StatusBadRequest, id, method, headerMismatch("MCP-Protocol-Version header value %q does not match body value %q", clip(headerVersion, 40), clip(bodyVersion, 40)))
+		return
 	}
 	if !slices.Contains(SupportedVersions(), version) {
 		h.fail(w, r, http.StatusBadRequest, id, method, &Error{
@@ -428,10 +433,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if modern {
 		if !hasBodyVersion {
 			h.fail(w, r, http.StatusBadRequest, id, method, &Error{Code: CodeInvalidParams, Message: "Invalid params: _meta." + metaProtocolVersion + " is required"})
-			return
-		}
-		if bodyVersion != headerVersion {
-			h.fail(w, r, http.StatusBadRequest, id, method, headerMismatch("MCP-Protocol-Version header value %q does not match body value %q", clip(headerVersion, 40), clip(bodyVersion, 40)))
 			return
 		}
 		mirrored := r.Header.Get("Mcp-Method")
