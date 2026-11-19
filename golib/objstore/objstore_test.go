@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -247,19 +248,28 @@ func TestContract(t *testing.T) {
 	}
 }
 
-// TestPutIfAbsentRace: exactly one of many concurrent creators wins, on every
-// backend (file: link(2); s3: If-None-Match: *).
+// TestPutIfAbsentRace: at most one of many concurrent creators wins, on every
+// backend (file: link(2); s3: If-None-Match: *), and what is stored is one
+// contender's value in full.
+//
+// Against a real server a request can also fail in transit (a connection the
+// server closed under load): its outcome is then unknown to the caller — the
+// object may or may not have been created by it. The test accepts that, since
+// it is what callers must cope with, but it never accepts two winners.
 func TestPutIfAbsentRace(t *testing.T) {
 	all := backends()
 	for _, b := range all[:len(all)-1] { // every backend once (the last is a second devs3 flavour)
 		t.Run(b.name, func(t *testing.T) {
 			st := b.open(t)
 			ctx := context.Background()
+			lost := 0
 			for round := 0; round < 10; round++ {
 				key := fmt.Sprintf("control/lease/shipper-1-0/%012d.json", round)
 				const n = 24
 				var wins, exists atomic.Int32
 				var winner atomic.Int32
+				var mu sync.Mutex
+				unknown := map[string]bool{} // payloads of requests that failed in transit
 				var wg sync.WaitGroup
 				start := make(chan struct{})
 				for i := 0; i < n; i++ {
@@ -267,13 +277,19 @@ func TestPutIfAbsentRace(t *testing.T) {
 					go func(i int) {
 						defer wg.Done()
 						<-start
-						_, err := st.PutIfAbsent(ctx, key, []byte(fmt.Sprintf("holder-%02d", i)))
+						payload := fmt.Sprintf("holder-%02d", i)
+						_, err := st.PutIfAbsent(ctx, key, []byte(payload))
+						var transit *url.Error
 						switch {
 						case err == nil:
 							wins.Add(1)
 							winner.Store(int32(i))
 						case errors.Is(err, objstore.ErrAlreadyExists):
 							exists.Add(1)
+						case errors.As(err, &transit):
+							mu.Lock()
+							unknown[payload] = true
+							mu.Unlock()
 						default:
 							t.Errorf("unexpected: %v", err)
 						}
@@ -281,13 +297,29 @@ func TestPutIfAbsentRace(t *testing.T) {
 				}
 				close(start)
 				wg.Wait()
-				if wins.Load() != 1 || exists.Load() != n-1 {
-					t.Fatalf("wins=%d exists=%d", wins.Load(), exists.Load())
+				lost += len(unknown)
+				if wins.Load() > 1 || int(wins.Load()+exists.Load())+len(unknown) != n {
+					t.Fatalf("wins=%d exists=%d unknown=%d", wins.Load(), exists.Load(), len(unknown))
 				}
-				got, _, _ := st.Get(ctx, key, nil)
-				if want := fmt.Sprintf("holder-%02d", winner.Load()); string(got) != want {
-					t.Fatalf("content %q, winner %q", got, want)
+				got, _, err := st.Get(ctx, key, nil)
+				if err != nil {
+					t.Fatalf("after the race: %v", err)
 				}
+				switch {
+				case wins.Load() == 1:
+					if want := fmt.Sprintf("holder-%02d", winner.Load()); string(got) != want {
+						t.Fatalf("content %q, winner %q", got, want)
+					}
+				case !unknown[string(got)]:
+					// Nobody was told it won, so the object must come from a request whose answer was lost.
+					t.Fatalf("content %q but no request reported success (unknown: %v)", got, unknown)
+				}
+			}
+			if lost > 0 {
+				t.Logf("%d of %d requests failed in transit (outcome unknown to the caller)", lost, 10*24)
+			}
+			if b.name != "s3-real" && lost > 0 {
+				t.Fatalf("in-process backends must not lose requests")
 			}
 		})
 	}

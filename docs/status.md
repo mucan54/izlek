@@ -144,7 +144,8 @@ Veri sentetiktir (küçük event'ler); gerçek veride `b` ve `w` farklı çıkar
 
 - **MCP sunucusu ve OAuth yetkilendirme sunucusu** (`docs/mcp.md`): control plane `/mcp` ucunda 22 araç sunar (kurulum, flag, analitik). Kimlik: `admin` kapsamlı gizli anahtar ya da control plane'in kendi verdiği OAuth 2.1 token'ları. Doğrulama: Go testleri (yarış denetimiyle), resmî MCP istemci kitaplıklarıyla uyum testi (iki protokol kuşağı, tam OAuth akışı, Chromium'da onay sayfası) ve uçtan uca testte gerçek sorgu servisine karşı araç çağrıları. **Barındırılan claude.ai ve ChatGPT servislerine karşı hiç denenmedi.** Yeni bir saldırı yüzeyidir; dış güvenlik incelemesi kapsamına girmelidir.
 - **Panel dili**: İngilizce ve Türkçe; API hata mesajları henüz yalnızca Türkçe.
-- **Coolify compose dosyası** (`docker-compose.coolify.yml`): CI'da düz Docker Compose ile çalıştırılıyor; gerçek bir Coolify kurulumunda denenmedi.
+- **Coolify compose dosyası** (`docker-compose.coolify.yml`): CI'da düz Docker Compose ile derlenip çalıştırıldı ve geçti (yığın kendini kuruyor, tüm konteynerler sağlıklı, üretilen parolayla giriş, ikinci deploy'da yeni anahtar üretilmiyor). **Gerçek bir Coolify kurulumunda denenmedi**: alan adı yönlendirmesi (`SERVICE_URL_*`) ve `exclude_from_hc` yalnızca Coolify belgelerine dayanıyor.
+- **MinIO'da gözlenen bir durum**: 24 eşzamanlı koşullu yazmadan biri bir CI koşusunda bağlantı düzeyinde koptu (`EOF`). Kazanan yine tekti. İstemci için bu "sonuç bilinmiyor" demektir; manifest ve plan protokolleri yeniden denemede aynı sonuca vardığı için güvenlidir, test de artık bu durumu ayrı sayar ama asla iki kazanan kabul etmez.
 
 ## 7. Tasarıma eklenenler
 
