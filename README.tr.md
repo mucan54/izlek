@@ -75,7 +75,7 @@ curl -H 'Authorization: Bearer sk_…' -H 'Content-Type: application/json' http:
 
 Event'ler varsayılan ayarlarla yaklaşık 15–30 sn içinde sorguda görünür (segment rotasyonu 10 sn + shipper turu).
 
-Dağıtım: `deploy/compose/` bir Docker Compose taslağı içerir (**Docker ile doğrulanmadı**); çok makineli kurulumda tüm servislere aynı `LA_STORE_URL=s3://…` verilir. Ortam değişkenleri her bileşenin README'sindedir.
+Dağıtım: `deploy/compose/` Docker Compose dosyasını, kökteki `docker-compose.coolify.yml` ise Coolify'a tek kaynak olarak kurulabilen sürümünü içerir (rehber: `deploy/coolify/README.md`; ikisi de CI'da düz Docker Compose ile deneniyor, gerçek bir Coolify kurulumunda denenmedi); çok makineli kurulumda tüm servislere aynı `LA_STORE_URL=s3://…` verilir. Ortam değişkenleri her bileşenin README'sindedir.
 
 ## Testler
 

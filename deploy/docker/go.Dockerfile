@@ -12,8 +12,11 @@ COPY control ./control
 COPY canary ./canary
 ARG PKG=./ingest/cmd/la-ingest
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/app ${PKG}
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/la-healthcheck ./golib/cmd/la-healthcheck
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/app /app
+# Health probe for compose/orchestrators: the image has no shell or curl.
+COPY --from=build /out/la-healthcheck /la-healthcheck
 USER nonroot:nonroot
 ENTRYPOINT ["/app"]

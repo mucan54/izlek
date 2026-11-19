@@ -1,0 +1,7 @@
+# Only for deploy/compose/smoke.sh coolify: outside Coolify there is no proxy that routes
+# domains to the two public services, so the test publishes their ports on loopback instead.
+services:
+  control:
+    ports: ["127.0.0.1:8090:8090"]
+  ingest:
+    ports: ["127.0.0.1:8080:8080"]

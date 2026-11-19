@@ -16,9 +16,11 @@ COPY ingest ./ingest
 COPY control ./control
 COPY canary ./canary
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/app ./control/cmd/la-control
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/la-healthcheck ./golib/cmd/la-healthcheck
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/app /app
+COPY --from=build /out/la-healthcheck /la-healthcheck
 COPY --from=ui /src/ui/dist /ui
 USER nonroot:nonroot
 ENTRYPOINT ["/app"]

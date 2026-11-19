@@ -14,6 +14,13 @@
 x-store: &store
   LA_STORE_URL: file:///data/store
 
+# İmajlarda kabuk ve curl yoktur; sağlık yoklaması imajdaki /la-healthcheck ile yapılır.
+x-health: &health
+  interval: 10s
+  timeout: 5s
+  retries: 6
+  start_period: 20s
+
 services:
   init:
     image: busybox:1.36
@@ -32,6 +39,7 @@ services:
       LA_TRUSTED_PROXIES: "${LA_TRUSTED_PROXIES:-0}"
     volumes: [data:/data]
     ports: ["8080:8080"]
+    healthcheck: { <<: *health, test: ["CMD", "/la-healthcheck", "http://127.0.0.1:8080/healthz"] }
     stop_grace_period: 90s
     restart: unless-stopped
 
@@ -40,6 +48,7 @@ services:
     depends_on: { init: { condition: service_completed_successfully } }
     command: ["ship"]
     environment: { <<: *store, LA_METRICS_ADDR: "0.0.0.0:9102" }
+    healthcheck: { <<: *health, test: ["CMD", "/la-healthcheck", "http://127.0.0.1:9102/healthz"] }
     volumes: [data:/data]
     restart: unless-stopped
 
@@ -48,6 +57,7 @@ services:
     depends_on: { init: { condition: service_completed_successfully } }
     command: ["compact"]
     environment: { <<: *store, LA_METRICS_ADDR: "0.0.0.0:9103", LA_COMPACTOR_SPOOL: /data/spool }
+    healthcheck: { <<: *health, test: ["CMD", "/la-healthcheck", "http://127.0.0.1:9103/healthz"] }
     volumes: [data:/data]
     restart: unless-stopped
 
@@ -59,6 +69,7 @@ services:
       LA_QUERY_LISTEN: "0.0.0.0:8081"
       LA_QUERY_INTERNAL_SECRET: "${LA_QUERY_INTERNAL_SECRET:?}"
       LA_QUERY_CACHE_DIR: /data/qcache
+    healthcheck: { <<: *health, test: ["CMD", "/la-healthcheck", "http://127.0.0.1:8081/readyz"] }
     volumes: [data:/data]
     restart: unless-stopped
 
@@ -76,6 +87,7 @@ services:
       LA_COOKIE_SECURE: "${LA_COOKIE_SECURE:-true}"
     volumes: [data:/data]
     ports: ["8090:8090"]
+    healthcheck: { <<: *health, test: ["CMD", "/la-healthcheck", "http://127.0.0.1:8090/readyz"] }
     restart: unless-stopped
 
   canary:

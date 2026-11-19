@@ -202,7 +202,13 @@ docker compose up -d --build
 docker compose run --rm control bootstrap --email you@example.com --password '…' --org Acme --project Shop
 ```
 
-Only ingestion (`8080`) and the control plane (`8090`) are published. Put a TLS-terminating proxy in front and set `LA_TRUSTED_PROXIES` and `LA_COOKIE_SECURE` accordingly. `deploy/compose/smoke.sh` builds the images, boots the stack and runs an end-to-end check; CI runs it on every push.
+Only ingestion (`8080`) and the control plane (`8090`) are published; every container has a health check (the images are shell-less, so they carry a small probe binary). Put a TLS-terminating proxy in front and set `LA_TRUSTED_PROXIES` and `LA_COOKIE_SECURE` accordingly. `deploy/compose/smoke.sh` builds the images, boots the stack and runs an end-to-end check; CI runs it on every push.
+
+### Coolify
+
+[`docker-compose.coolify.yml`](docker-compose.coolify.yml) deploys the whole platform as one [Coolify](https://coolify.io) resource: choose the **Docker Compose** build pack, set *Docker Compose Location* to `/docker-compose.coolify.yml`, fill in `ADMIN_EMAIL` and deploy. Coolify assigns the two public domains (UI and ingestion) and generates the admin password and internal secret; the stack creates the first account by itself. Guide: [`deploy/coolify/README.md`](deploy/coolify/README.md).
+
+CI runs this file with plain Docker Compose on every push; it has not been tried on a real Coolify instance yet.
 
 ### Several machines
 
@@ -538,7 +544,7 @@ go vet ./... && go test -race ./...               # ingest, control, canary, sha
 (cd ui      && npm ci && npm test)                # unit + browser tests against a mock API
 (cd sdk-kmp && ./gradlew jvmTest)                 # KMP common code on the JVM target
 node e2e/run.mjs && node e2e/run.mjs --s3         # the whole pipeline with the real binaries
-deploy/compose/smoke.sh                           # images + compose (needs Docker)
+deploy/compose/smoke.sh && deploy/compose/smoke.sh coolify   # images + both compose files (needs Docker)
 ```
 
 How correctness is approached:

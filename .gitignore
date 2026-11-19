@@ -19,3 +19,4 @@ local.properties
 .env
 target-*/
 .local/
+.coolify-smoke.yml

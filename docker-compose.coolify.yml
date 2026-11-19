@@ -1,0 +1,159 @@
+# izlek on Coolify (v4) — single server, everything in one resource.
+#
+# In Coolify: New resource → your Git repository → Build Pack "Docker Compose",
+# Base Directory "/", Docker Compose Location "/docker-compose.coolify.yml".
+# Set ADMIN_EMAIL, deploy, then open the generated control-plane URL and sign in
+# with ADMIN_EMAIL and the generated SERVICE_PASSWORD_ADMIN (Environment Variables tab).
+# Step-by-step guide, sizing and S3 setup: deploy/coolify/README.md
+#
+# Two services get a domain from Coolify (SERVICE_URL_<SERVICE>_<PORT>):
+#   control  the web UI, admin API and MCP endpoint
+#   ingest   the address your SDKs send events to (the SDK "host")
+# Nothing publishes a host port; everything else is reachable only inside the stack.
+
+x-health: &health
+  interval: 10s
+  timeout: 5s
+  retries: 6
+  start_period: 20s
+
+services:
+  # Creates the data directories with the owner the (non-root, shell-less) images run as.
+  init:
+    image: busybox:1.36
+    command: sh -c "mkdir -p /data/store /data/wal /data/control /data/qcache /data/spool && chown -R 65532:65532 /data"
+    volumes: [data:/data]
+    restart: "no"
+    exclude_from_hc: true
+
+  # First deploy: creates the admin user, an organization, a project, a write token and a secret key,
+  # and prints the token and the key once in this container's log. Later deploys change nothing.
+  bootstrap:
+    build: &control-build { context: ., dockerfile: deploy/docker/control.Dockerfile }
+    command:
+      - bootstrap
+      - --email
+      - ${ADMIN_EMAIL:?}
+      - --org
+      - ${ORG_NAME:-My organization}
+      - --project
+      - ${PROJECT_NAME:-My project}
+    environment:
+      - LA_STORE_URL=${LA_STORE_URL:-file:///data/store}
+      - LA_S3_ENDPOINT=${LA_S3_ENDPOINT:-}
+      - LA_S3_REGION=${LA_S3_REGION:-}
+      - LA_S3_ACCESS_KEY=${LA_S3_ACCESS_KEY:-}
+      - LA_S3_SECRET_KEY=${LA_S3_SECRET_KEY:-}
+      - LA_CONTROL_DB=/data/control/control.db
+      - LA_BOOTSTRAP_PASSWORD=${SERVICE_PASSWORD_ADMIN}
+    volumes: [data:/data]
+    depends_on: { init: { condition: service_completed_successfully } }
+    restart: "no"
+    exclude_from_hc: true
+
+  control:
+    build: *control-build
+    depends_on: { bootstrap: { condition: service_completed_successfully } }
+    environment:
+      - SERVICE_URL_CONTROL_8090
+      - LA_STORE_URL=${LA_STORE_URL:-file:///data/store}
+      - LA_S3_ENDPOINT=${LA_S3_ENDPOINT:-}
+      - LA_S3_REGION=${LA_S3_REGION:-}
+      - LA_S3_ACCESS_KEY=${LA_S3_ACCESS_KEY:-}
+      - LA_S3_SECRET_KEY=${LA_S3_SECRET_KEY:-}
+      - LA_CONTROL_LISTEN=:8090
+      # Keeps /metrics off the public listener.
+      - LA_CONTROL_ADMIN_LISTEN=:9101
+      - LA_CONTROL_DB=/data/control/control.db
+      - LA_UI_DIR=/ui
+      - LA_QUERY_URL=http://query:8081
+      - LA_QUERY_INTERNAL_SECRET=${SERVICE_PASSWORD_64_QUERYSECRET}
+      # Coolify's proxy terminates TLS, so cookies must be Secure. Set false only for a plain-HTTP test.
+      - LA_COOKIE_SECURE=${LA_COOKIE_SECURE:-true}
+      # Public addresses, used for SDK snippets and the MCP/OAuth endpoints.
+      - LA_PUBLIC_URL=${SERVICE_URL_CONTROL_8090}
+      - LA_PUBLIC_INGEST_URL=${SERVICE_URL_INGEST_8080}
+    volumes: [data:/data]
+    expose: ["8090"]
+    healthcheck: { <<: *health, test: ["CMD", "/la-healthcheck", "http://127.0.0.1:8090/readyz"] }
+    restart: unless-stopped
+
+  ingest:
+    build: { context: ., dockerfile: deploy/docker/go.Dockerfile, args: { PKG: ./ingest/cmd/la-ingest } }
+    depends_on: { bootstrap: { condition: service_completed_successfully } }
+    environment:
+      - SERVICE_URL_INGEST_8080
+      - LA_STORE_URL=${LA_STORE_URL:-file:///data/store}
+      - LA_S3_ENDPOINT=${LA_S3_ENDPOINT:-}
+      - LA_S3_REGION=${LA_S3_REGION:-}
+      - LA_S3_ACCESS_KEY=${LA_S3_ACCESS_KEY:-}
+      - LA_S3_SECRET_KEY=${LA_S3_SECRET_KEY:-}
+      - LA_LISTEN=:8080
+      - LA_ADMIN_LISTEN=:9100
+      - LA_NODE_ID=ing-01
+      - LA_WAL_DIR=/data/wal
+      # Number of proxies in front (needed for per-IP rate limits and country lookup):
+      # 1 = Coolify's proxy only; 2 if a CDN such as Cloudflare is in front of it as well.
+      - LA_TRUSTED_PROXIES=${LA_TRUSTED_PROXIES:-1}
+    volumes: [data:/data]
+    expose: ["8080"]
+    # Liveness, not readiness: the only ingestion node must stay routable so that it can
+    # answer 503 + Retry-After itself when it has to push back.
+    healthcheck: { <<: *health, test: ["CMD", "/la-healthcheck", "http://127.0.0.1:8080/healthz"] }
+    # Ingestion seals and uploads its write-ahead log on SIGTERM.
+    stop_grace_period: 90s
+    restart: unless-stopped
+
+  shipper:
+    build: &engine-build { context: ., dockerfile: deploy/docker/engine.Dockerfile, target: shipper, args: { CARGO_BUILD_JOBS: "${CARGO_BUILD_JOBS:-}" } }
+    command: ["ship"]
+    depends_on: { init: { condition: service_completed_successfully } }
+    environment:
+      - LA_STORE_URL=${LA_STORE_URL:-file:///data/store}
+      - LA_S3_ENDPOINT=${LA_S3_ENDPOINT:-}
+      - LA_S3_REGION=${LA_S3_REGION:-}
+      - LA_S3_ACCESS_KEY=${LA_S3_ACCESS_KEY:-}
+      - LA_S3_SECRET_KEY=${LA_S3_SECRET_KEY:-}
+      - LA_METRICS_ADDR=0.0.0.0:9102
+      - LA_SHIPPER_BATCH_MB=${LA_SHIPPER_BATCH_MB:-64}
+    volumes: [data:/data]
+    healthcheck: { <<: *health, test: ["CMD", "/la-healthcheck", "http://127.0.0.1:9102/healthz"] }
+    restart: unless-stopped
+
+  compactor:
+    build: *engine-build
+    command: ["compact"]
+    depends_on: { init: { condition: service_completed_successfully } }
+    environment:
+      - LA_STORE_URL=${LA_STORE_URL:-file:///data/store}
+      - LA_S3_ENDPOINT=${LA_S3_ENDPOINT:-}
+      - LA_S3_REGION=${LA_S3_REGION:-}
+      - LA_S3_ACCESS_KEY=${LA_S3_ACCESS_KEY:-}
+      - LA_S3_SECRET_KEY=${LA_S3_SECRET_KEY:-}
+      - LA_METRICS_ADDR=0.0.0.0:9103
+      - LA_COMPACTOR_SPOOL=/data/spool
+    volumes: [data:/data]
+    healthcheck: { <<: *health, test: ["CMD", "/la-healthcheck", "http://127.0.0.1:9103/healthz"] }
+    restart: unless-stopped
+
+  query:
+    build: { context: ., dockerfile: deploy/docker/engine.Dockerfile, target: query, args: { CARGO_BUILD_JOBS: "${CARGO_BUILD_JOBS:-}" } }
+    depends_on: { init: { condition: service_completed_successfully } }
+    environment:
+      - LA_STORE_URL=${LA_STORE_URL:-file:///data/store}
+      - LA_S3_ENDPOINT=${LA_S3_ENDPOINT:-}
+      - LA_S3_REGION=${LA_S3_REGION:-}
+      - LA_S3_ACCESS_KEY=${LA_S3_ACCESS_KEY:-}
+      - LA_S3_SECRET_KEY=${LA_S3_SECRET_KEY:-}
+      - LA_QUERY_LISTEN=0.0.0.0:8081
+      - LA_QUERY_INTERNAL_SECRET=${SERVICE_PASSWORD_64_QUERYSECRET}
+      - LA_QUERY_CACHE_DIR=/data/qcache
+      - LA_QUERY_CACHE_BYTES=${LA_QUERY_CACHE_BYTES:-2147483648}
+      # Memory budget of a single query; lower it on small servers.
+      - LA_QUERY_MEMORY_BYTES=${LA_QUERY_MEMORY_BYTES:-1073741824}
+    volumes: [data:/data]
+    healthcheck: { <<: *health, test: ["CMD", "/la-healthcheck", "http://127.0.0.1:8081/readyz"] }
+    restart: unless-stopped
+
+volumes:
+  data:
