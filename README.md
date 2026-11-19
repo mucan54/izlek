@@ -4,7 +4,7 @@ Kendi sunucunuzda çalışan hafif ürün analitiği platformu: event toplama, k
 
 Tasarım belgesi: [`docs/design.md`](docs/design.md) · Sözleşmeler: [`spec/`](spec/) · **Neyin doğrulandığı, neyin doğrulanmadığı: [`docs/status.md`](docs/status.md)**
 
-> **Durum:** v0.1. Bütün bileşenler yazıldı ve tek makinede gerçek binary'lerle uçtan uca çalışıyor. Production'a hazır **değildir**: gerçek bir S3 sağlayıcısında, çok node'lu kurulumda, gerçek Android/iOS cihazlarında ve uzun süreli yük altında denenmedi. Ayrıntı `docs/status.md` içindedir.
+> **Durum:** v0.1. Bütün bileşenler yazıldı ve tek makinede gerçek binary'lerle uçtan uca çalışıyor. Production'a hazır **değildir**: bir bulut sağlayıcısının S3'ünde (CI yalnızca MinIO'yu dener), çok node'lu kurulumda, gerçek Android/iOS cihazlarında ve uzun süreli yük altında denenmedi. Ayrıntı `docs/status.md` içindedir.
 
 ## Mimari
 

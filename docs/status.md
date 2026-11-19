@@ -8,7 +8,7 @@ Bu belge tasarımın "production'a hazır olma listesi"ni (§21) ve "ölçülece
 
 - Tasarımdaki bütün bileşenler yazıldı: ingestion, shipper, compactor, sorgu servisi, control plane, UI, Web SDK, KMP SDK, kanarya, PostHog adaptörü, flag'ler, session replay.
 - Tek makinede gerçek binary'lerle uçtan uca çalışıyor; bu, `file://` depoda ve S3 protokolü üzerinden (depodaki geliştirme S3 sunucusu) otomatik testle gösterildi (`e2e/`).
-- **Production'a hazır değil.** Eksikler aşağıda; en önemlileri: gerçek S3 sağlayıcısı, çok node, gerçek mobil cihazlar, uzun süreli yük ve kanarya, tatbikatlar, Docker imajları, dış güvenlik incelemesi.
+- **Production'a hazır değil.** Eksikler aşağıda; en önemlileri: bulut sağlayıcısının kendi S3'ü (yalnızca MinIO denendi), çok node, gerçek mobil cihazlar, uzun süreli yük ve kanarya, tatbikatlar, Docker imajları, dış güvenlik incelemesi.
 
 ## 2. Otomatik testler (bu depoda, son koşu)
 
@@ -26,7 +26,7 @@ Bu belge tasarımın "production'a hazır olma listesi"ni (§21) ve "ölçülece
 
 Tek seferlik uzun koşular (CI'da değil): 400 tohumluk diferansiyel koşu (9 600 funnel, 2 400 retention, 3 200 trend karşılaştırması) hatasız; sorgu servisine bilerek eklenen 14 hatanın 14'ü diferansiyel paket tarafından yakalandı; her çözücü için ~30 sn'lik fuzz koşuları.
 
-CI: `.github/workflows/ci.yml` yukarıdaki adımların hepsini tanımlar; ayrıca depo sözleşmesini ve uçtan uca testi imza doğrulayan gerçek bir S3 uygulamasına (MinIO) karşı koşar. Güncel sonuç için deponun Actions sekmesine bakın.
+CI: `.github/workflows/ci.yml` yukarıdaki adımların hepsini tanımlar; ayrıca depo sözleşmesini ve uçtan uca testi imza doğrulayan gerçek bir S3 uygulamasına (MinIO) karşı koşar. İş akışı GitHub Actions'ta `afdff48` commit'inde baştan sona yeşil koştu (6 iş, yaklaşık 47 dakika; önbellek dolunca kısalması beklenir). Güncel sonuç için deponun Actions sekmesine bakın.
 
 ## 3. Ölçümler
 
@@ -55,7 +55,7 @@ Veri sentetiktir (küçük event'ler); gerçek veride `b` ve `w` farklı çıkar
 
 | # | Varsayım | Durum |
 |---|---|---|
-| 1 | Object storage koşullu yazmayı doğru uygular | **Doğrulanmadı.** Yalnızca yerel dosya deposu, bellek içi depo ve imza doğrulamayan geliştirme S3 sunucusunda sınandı. Seçilen sağlayıcıda eşzamanlı `If-None-Match: *` testi şart |
+| 1 | Object storage koşullu yazmayı doğru uygular | **MinIO için doğrulandı** (CI'da, 2025-07-23 sürümü): 24 eşzamanlı "yoksa oluştur" denemesinden her turda tam biri kazanıyor, 12 eşzamanlı manifest commit'inin hepsi ayrı sürüm oluyor; Go ve Rust istemcileri, SigV4 imzası doğrulanarak. **Başka sağlayıcıda doğrulanmadı**: seçilen sağlayıcıya karşı aynı testler koşulmalı (`LA_TEST_S3_ENDPOINT`, bkz. `engine/core/tests/s3_real.rs`, `golib/objstore`) |
 | 2 | Kişi sıralı düzen funnel'ı hızlandırır | Bu ölçekte doğrulandı (≈ 28×, tam aynı anlam için) |
 | 3 | Sorgu anı kimlik yeniden yazımı ucuzdur | **Kısmen.** Kişiden bağımsız sorgular etkilenmiyor; kişi sıralı operatörler tüm dosyalar bayatken 1,8–11,7× yavaşlıyor. Compaction bayatlığı giderir; iki bilinen iyileştirme yapılmadı (`engine/query/README.md`) |
 | 4 | Kişi sıralaması trendleri kabul edilemez yavaşlatmaz | Bu ölçekte doğrulandı (fark ölçüm gürültüsü içinde; yalnızca çok dar zaman aralığında 13 ms ↔ 3 ms) |
@@ -71,7 +71,7 @@ Veri sentetiktir (küçük event'ler); gerçek veride `b` ve `w` farklı çıkar
 
 **Doğruluk**
 - [x] Wire vektörleri Go, Rust, TypeScript ve Kotlin'de geçiyor
-- [x] Diferansiyel testler var ve CI tanımında zorunlu (CI'ın kendisi henüz koşmadı)
+- [x] Diferansiyel testler var ve CI'da koşuyor
 - [x] Shipper ve compaction idempotency testleri (plan yürütmenin her adımında çökme enjeksiyonu)
 - [ ] Kanarya 14 gün kesintisiz — kanarya yazıldı; uzun süreli koşu yok
 
