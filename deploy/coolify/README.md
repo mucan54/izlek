@@ -15,7 +15,7 @@
 
 1. **Create the resource.** In your Coolify project choose *New Resource* → your Git source → repository `mucan54/izlek` (or your fork), branch `main`.
 2. **Build pack.** Select **Docker Compose**. Set *Base Directory* to `/` and *Docker Compose Location* to `/docker-compose.coolify.yml`.
-3. **Environment variables.** Coolify lists the variables the file uses. Only one is required:
+3. **Environment variables.** Coolify lists the variables the file uses. Only one is required, and it must be set **before the first deploy** (if it is empty the images still build, but the `bootstrap` step stops with a message in its log and the control plane does not start; set it and redeploy):
 
    | Variable | Required | Meaning |
    |---|---|---|

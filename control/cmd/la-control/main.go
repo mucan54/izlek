@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -159,11 +160,18 @@ func bootstrap(args []string, cfg config.Config, cfgErr error, log *slog.Logger,
 		fmt.Fprintf(stderr, "la-control bootstrap: unexpected argument %q\n", fs.Arg(0))
 		return exitUsage
 	}
-	if in.Password == "" {
-		in.Password = getenv("LA_BOOTSTRAP_PASSWORD")
+	// Each flag can also come from the environment, so that a container
+	// platform can pass them without interpolating them into the command.
+	for _, f := range []struct {
+		v   *string
+		env string
+	}{{&in.Email, "LA_BOOTSTRAP_EMAIL"}, {&in.Password, "LA_BOOTSTRAP_PASSWORD"}, {&in.Org, "LA_BOOTSTRAP_ORG"}, {&in.Project, "LA_BOOTSTRAP_PROJECT"}} {
+		if *f.v == "" {
+			*f.v = strings.TrimSpace(getenv(f.env))
+		}
 	}
 	if in.Email == "" || in.Org == "" || in.Project == "" {
-		fmt.Fprintln(stderr, "la-control bootstrap: --email, --org and --project are required")
+		fmt.Fprintln(stderr, "la-control bootstrap: --email, --org and --project are required (or LA_BOOTSTRAP_EMAIL, LA_BOOTSTRAP_ORG, LA_BOOTSTRAP_PROJECT)")
 		return exitUsage
 	}
 	if cfgErr != nil {

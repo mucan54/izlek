@@ -117,6 +117,14 @@ func TestBootstrapCommand(t *testing.T) {
 			t.Errorf("%v: exit %d, want %d", bad, code, exitUsage)
 		}
 	}
+	// Everything from the environment (how docker-compose.coolify.yml calls it): idempotent, no new key.
+	c.env["LA_BOOTSTRAP_EMAIL"], c.env["LA_BOOTSTRAP_ORG"], c.env["LA_BOOTSTRAP_PROJECT"] = "admin@example.com", "Acme", "Shop"
+	if code, out, _ := c.run("bootstrap", "--json"); code != exitOK || strings.Contains(out, `"secret"`) || !strings.Contains(out, res.Token) {
+		t.Errorf("bootstrap from the environment: exit %d: %s", code, out)
+	}
+	delete(c.env, "LA_BOOTSTRAP_EMAIL")
+	delete(c.env, "LA_BOOTSTRAP_ORG")
+	delete(c.env, "LA_BOOTSTRAP_PROJECT")
 	delete(c.env, "LA_BOOTSTRAP_PASSWORD")
 	if code, out, _ := c.run("bootstrap", "--email", "new@example.com", "--password", "short", "--org", "A", "--project", "P"); code != exitFailure || out != "" {
 		t.Errorf("weak password: exit %d, stdout %q", code, out)

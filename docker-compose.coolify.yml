@@ -30,15 +30,13 @@ services:
   # and prints the token and the key once in this container's log. Later deploys change nothing.
   bootstrap:
     build: &control-build { context: ., dockerfile: deploy/docker/control.Dockerfile }
-    command:
-      - bootstrap
-      - --email
-      - ${ADMIN_EMAIL:?}
-      - --org
-      - ${ORG_NAME:-My organization}
-      - --project
-      - ${PROJECT_NAME:-My project}
+    command: ["bootstrap"]
     environment:
+      # Set ADMIN_EMAIL in Coolify before the first deploy. If it is empty this step stops with
+      # a message in its log and the control plane does not start (images still build).
+      - LA_BOOTSTRAP_EMAIL=${ADMIN_EMAIL:-}
+      - LA_BOOTSTRAP_ORG=${ORG_NAME:-My organization}
+      - LA_BOOTSTRAP_PROJECT=${PROJECT_NAME:-My project}
       - LA_STORE_URL=${LA_STORE_URL:-file:///data/store}
       - LA_S3_ENDPOINT=${LA_S3_ENDPOINT:-}
       - LA_S3_REGION=${LA_S3_REGION:-}
