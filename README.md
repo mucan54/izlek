@@ -482,6 +482,10 @@ The control plane is not on the data path. While it is down, ingestion, flag eva
 The control plane is also a remote [Model Context Protocol](https://modelcontextprotocol.io) server, so you can set up and operate izlek from an assistant such as **Claude** or **ChatGPT** instead of the web UI: "create a project for my shop and give me the snippet for a web page", "did the events arrive?", "roll out `new_checkout` to 20 % of iOS users", "what was last week's signup-to-purchase conversion by platform?".
 
 ```sh
+# Claude Code, with a personal access token: every organisation and project you belong to, with your role
+claude mcp add --transport http izlek https://analytics.example.com/mcp \
+  --header "Authorization: Bearer pat_…"
+
 # Claude Code, with a secret key (admin scope) of one project
 claude mcp add --transport http izlek https://analytics.example.com/mcp \
   --header "Authorization: Bearer sk_…"
@@ -504,7 +508,7 @@ In **claude.ai / Claude Desktop** and **ChatGPT**, add a custom connector with t
 
 How it is built:
 
-- **Two ways to authenticate.** A secret key with the `admin` scope (project-scoped; for clients that can send a header, such as Claude Code), or OAuth 2.1 access tokens issued by the control plane itself, which act as the user who approved them with that user's roles. The built-in authorization server implements PKCE (S256), protected-resource and server metadata, Client ID Metadata Documents and dynamic client registration, the `resource` parameter with audience checks, rotating refresh tokens and revocation. Scopes are `izlek:read` and `izlek:admin`.
+- **Three ways to authenticate.** A **personal access token** (`pat_…`, created under *Account → Access tokens*): account-wide, acts as you in every organisation and project with your current role, read-only or read-and-change, with an expiry; it also works on the HTTP API, except for account, member and destructive operations. A **project secret key** with the `admin` scope (one project only). Or OAuth 2.1 access tokens issued by the control plane itself, which act as the user who approved them with that user's roles. The built-in authorization server implements PKCE (S256), protected-resource and server metadata, Client ID Metadata Documents and dynamic client registration, the `resource` parameter with audience checks, rotating refresh tokens and revocation. Scopes are `izlek:read` and `izlek:admin`.
 - **Same rules as the web UI.** Tools run the existing API handlers in-process, so validation, role checks and the audit log are shared; mutating calls are recorded with the assistant that made them.
 - **Deliberately not exposed:** closing projects, deleting tokens, keys or flags, member management and deletion requests.
 - **Protocol revisions.** One stateless endpoint (`POST /mcp`, JSON responses) serves both the handshake-based revisions (2025-03-26 to 2025-11-25) and the handshake-free 2026-07-28 revision.

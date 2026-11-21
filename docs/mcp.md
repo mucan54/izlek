@@ -54,7 +54,7 @@ All three resolve to the permission model the rest of the control plane uses.
 | | Secret key (`sk_…`) | Personal access token (`pat_…`) | OAuth |
 |---|---|---|---|
 | Scope of access | **One project**, with the admin role in it. `create_project` is not available | **Account-wide**: every organisation and project you can reach, with your role in each, limited by the token's scopes | **Account-wide**, like a personal access token, limited by the scopes you granted |
-| How obtained | Project settings in the web UI (or `create_secret_key`); needs the `admin` key scope | **Account → Personal access tokens** in the web UI (`POST /api/me/tokens`); shown once | The assistant sends you to izlek's consent page; you approve |
+| How obtained | Project settings in the web UI (or `create_secret_key`); needs the `admin` key scope | **Account → Access tokens** in the web UI (`POST /api/me/tokens`); shown once | The assistant sends you to izlek's consent page; you approve |
 | Sent as | `Authorization: Bearer sk_…` | `Authorization: Bearer pat_…` | Access token the client obtained (refreshes itself) |
 | Which clients | Any that can set a header: Claude Code, Cursor, scripts | Any that can set a header: Claude Code, Cursor, scripts | Clients with a browser flow: claude.ai, Claude Desktop, ChatGPT, Claude Code |
 | Needs `LA_PUBLIC_URL` | No | No | Yes |
@@ -82,7 +82,7 @@ claude mcp add --transport http izlek https://izlek.example.com/mcp \
   --header "Authorization: Bearer pat_…"
 ```
 
-- **Create** one in the web UI under **Account → Personal access tokens**: a name, the scopes (`izlek:read`, or `izlek:read` + `izlek:admin`) and an expiry (30, 90, 365 days or none). The token (`pat_` + 32 characters) is shown **once**; izlek keeps only its SHA-256 hash. At most 25 per user.
+- **Create** one in the web UI under **Account → Access tokens**: a name, the scopes (`izlek:read`, or `izlek:read` + `izlek:admin`) and an expiry (30, 90, 365 days or none). The token (`pat_` + 32 characters) is shown **once**; izlek keeps only its SHA-256 hash. At most 25 per user.
 - **With several projects in reach**, the model should call `list_projects` first and pass `project_id` on every call (the server's instructions tell it so); a tool called without it answers "project_id is required" rather than guessing.
 - **Managing tokens needs a signed-in browser session.** No token — not a personal access token, not a secret key, not an OAuth token — can list, create or revoke personal access tokens, so a leaked credential cannot mint itself a successor.
 - **On the HTTP API** the same token works for scripts: `GET /api/me`, `GET`/`POST /api/projects` and everything under `/api/projects/{pid}/…` (tokens, keys, flags, insights, dashboards, the query proxy), with the same role checks as the UI. With only `izlek:read`, requests that change something answer `403 insufficient_scope`. Out of its reach whatever the scope: signing out, password and two-step verification, personal access tokens, connected apps, organisation members, the audit log, deleting an organisation, **closing a project** and **deletion requests**.
@@ -215,7 +215,7 @@ Details:
   ```
 
   (Session cookie; `DELETE` needs the `X-LA-CSRF` header like every other change. In the web UI the same list, with a Revoke button, is under **Account → Connected apps**.) Revoking ends the access and refresh tokens of that grant immediately.
-- **Personal access tokens** — revoke one under **Account → Personal access tokens** (`DELETE /api/me/tokens/{id}`); it stops working at once. Expired tokens stop by themselves.
+- **Personal access tokens** — revoke one under **Account → Access tokens** (`DELETE /api/me/tokens/{id}`); it stops working at once. Expired tokens stop by themselves.
 - **Changing your password, or switching on two-step verification, revokes all your grants and all your personal access tokens.**
 - An assistant can revoke its own tokens (`POST /oauth/revoke`, RFC 7009), which is what "disconnect" in a client usually does.
 - Grants end by themselves after 180 days; an unused refresh token after 30 days.

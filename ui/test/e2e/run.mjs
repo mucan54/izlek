@@ -1160,7 +1160,7 @@ await step('access tokens: create (read-only, 30 days), shown once with copy, li
     }, (mock.db.pats.push({ user_id: -1, id: 'foreign', seq: 0, name: 'başkası', prefix: 'pat_…zzzz', scopes: ['izlek:read'], created_at: 0, last_used_at: null, expires_at: null, hash: '' }), 'foreign'))
     assert.deepEqual(
       { ...api, filled: [...new Set(api.filled)] },
-      { noCsrf: [403, 'csrf'], noName: [400, 'bad_request'], longName: [400, 'bad_request'], adminOnly: [400, 'bad_request'], badExpiry: [400, 'bad_request'], foreign: [404, 'not_found'], filled: [201], tooMany: [400, 'too_many_tokens'] },
+      { noCsrf: [403, 'csrf'], noName: [400, 'bad_request'], longName: [400, 'bad_request'], adminOnly: [400, 'bad_request'], badExpiry: [400, 'bad_request'], foreign: [404, 'not_found'], filled: [201], tooMany: [409, 'too_many_tokens'] },
     )
     assert.equal(mine().length, 25)
     assert.ok(mock.db.pats.some((t) => t.id == 'foreign'))

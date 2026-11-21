@@ -404,7 +404,7 @@ export const createMockServer = (options = {}) => {
     if (key != 'izlek:read' && key != 'izlek:admin izlek:read') throw badRequest('"scopes": ["izlek:read"] ya da ["izlek:read","izlek:admin"]')
     const days = ctx.body.expires_in_days ?? null
     if (days !== null && !PAT_DAYS.includes(days)) throw badRequest('"expires_in_days": 30, 90, 365 ya da null')
-    if (livePats(ctx.user.id).length >= PAT_MAX) throw new HttpError(400, 'too_many_tokens', `En çok ${PAT_MAX} erişim token'ı oluşturulabilir`)
+    if (livePats(ctx.user.id).length >= PAT_MAX) throw new HttpError(409, 'too_many_tokens', `En çok ${PAT_MAX} erişim token'ı oluşturulabilir`)
     const token = 'pat_' + base62(40)
     const pat = {
       user_id: ctx.user.id,

@@ -4,7 +4,7 @@ This guide takes you from an empty Coolify project to a working analytics instal
 
 Everything runs as **one Coolify resource** built from [`docker-compose.coolify.yml`](../../docker-compose.coolify.yml) in the repository root.
 
-> **Tested so far.** CI builds and runs this exact file on every push (with plain Docker Compose, filling in the variables Coolify would). On a real Coolify v4 instance all six images built and the stack started; the problems met there are listed under [Troubleshooting](#troubleshooting). A complete run on Coolify through sign-in and event collection has not been confirmed yet — please report what you find.
+> **Tested so far.** CI builds and runs this exact file on every push (with plain Docker Compose, filling in the variables Coolify would). On a real Coolify v4 instance all six images built and the stack started; the problems met there are listed under [Troubleshooting](#troubleshooting). After those fixes a real installation on Coolify v4 ran end to end through sign-in, creating projects in the dashboard and connecting Claude over MCP (OAuth). Event collection on that installation was not checked by us — please report what you find.
 
 ---
 

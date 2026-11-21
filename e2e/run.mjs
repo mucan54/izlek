@@ -568,6 +568,41 @@ try {
     assert.ok(bad.body.error, JSON.stringify(bad.body))
   })
 
+  await step('account-wide access token: created with a session, drives MCP and the API across projects, revoked', async () => {
+    // Sign in like the UI does.
+    const login = await fetch(`${CONTROL}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(OWNER) })
+    assert.equal(login.status, 200)
+    const cookie = login.headers.get('set-cookie').split(';')[0]
+    const me = await (await fetch(`${CONTROL}/api/me`, { headers: { Cookie: cookie } })).json()
+    const session = (method, path, body) => fetch(CONTROL + path, { method, headers: { Cookie: cookie, 'X-LA-CSRF': me.csrf, 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) })
+    // A second project in the same organisation.
+    const second = await (await session('POST', '/api/projects', { org_id: me.orgs[0].id, name: 'Second' })).json()
+    const created = await session('POST', '/api/me/tokens', { name: 'e2e', scopes: ['izlek:read', 'izlek:admin'], expires_in_days: 30 })
+    assert.equal(created.status, 201)
+    const pat = (await created.json()).token
+    assert.match(pat, /^pat_[0-9A-Za-z]{32}$/)
+    // The token cannot manage tokens.
+    assert.equal((await fetch(`${CONTROL}/api/me/tokens`, { headers: { Authorization: `Bearer ${pat}` } })).status, 403)
+    // MCP: sees both projects and works in each.
+    const rpc = async (method, params) => (await fetch(`${CONTROL}/mcp`, { method: 'POST', headers: { Authorization: `Bearer ${pat}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) })).json()
+    const list = (await rpc('tools/call', { name: 'list_projects', arguments: {} })).result.structuredContent
+    const ids = list.projects.map((p) => p.id)
+    assert.ok(ids.includes(boot.project_id) && ids.includes(second.id), JSON.stringify(ids))
+    const tools = (await rpc('tools/list', {})).result.tools.map((t) => t.name)
+    assert.ok(tools.includes('create_project'), 'an account-wide admin token may create projects')
+    for (const pid of [boot.project_id, second.id]) {
+      const r = await rpc('tools/call', { name: 'get_sdk_setup', arguments: { project_id: pid, platform: 'web' } })
+      assert.ok(!r.error && !r.result.isError, JSON.stringify(r).slice(0, 300))
+    }
+    // The HTTP API with the same token, in both projects; closing a project is refused.
+    for (const pid of [boot.project_id, second.id]) assert.equal((await fetch(`${CONTROL}/api/projects/${pid}/flags`, { headers: { Authorization: `Bearer ${pat}` } })).status, 200)
+    assert.equal((await fetch(`${CONTROL}/api/projects/${second.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${pat}` } })).status, 403)
+    // Revoked → refused everywhere.
+    const { id } = (await (await session('GET', '/api/me/tokens')).json())[0]
+    assert.equal((await session('DELETE', `/api/me/tokens/${id}`)).status, 204)
+    assert.equal((await fetch(`${CONTROL}/api/projects`, { headers: { Authorization: `Bearer ${pat}` } })).status, 401)
+  })
+
   await step('compaction keeps every count (exactly-once across L0 → L1)', async () => {
     const snapshot = async () => Object.fromEntries(await sql('SELECT event, count(*) FROM events GROUP BY 1 ORDER BY 1'))
     const before = await snapshot()
