@@ -36,17 +36,22 @@ const (
 )
 
 // mcpPrincipal is who an MCP request acts as: an sk_ key (one project, the
-// admin role) or a user who authorised an OAuth client (that user's roles,
-// limited by the scopes of the grant).
+// admin role), or a user — through an OAuth client the user authorised or
+// through one of the user's personal access tokens (that user's roles,
+// limited by the scopes of the grant or token).
 type mcpPrincipal struct {
 	key   *db.Key
 	user  *db.User
-	grant *db.OAuthGrant
+	grant *db.OAuthGrant    // OAuth
+	pat   *db.PersonalToken // personal access token
 }
 
 func (p *mcpPrincipal) hasScope(scope string) bool {
 	if p.key != nil {
 		return true // only admin-scoped keys get this far
+	}
+	if p.pat != nil {
+		return oauth.HasScope(p.pat.Scopes, scope)
 	}
 	return oauth.HasScope(p.grant.Scopes, scope)
 }
@@ -54,6 +59,9 @@ func (p *mcpPrincipal) hasScope(scope string) bool {
 func (p *mcpPrincipal) limiterKey() string {
 	if p.key != nil {
 		return "key:" + strconv.FormatInt(p.key.ID, 10)
+	}
+	if p.pat != nil {
+		return "pat:" + strconv.FormatInt(p.pat.ID, 10)
 	}
 	return "grant:" + strconv.FormatInt(p.grant.ID, 10)
 }
@@ -161,7 +169,7 @@ func (s *Server) serveMCP(w *statusWriter, r *http.Request, info *requestInfo) {
 	token, ok := bearerToken(r)
 	if !ok || token == "" {
 		s.mMCP.With("unauthenticated").Inc()
-		s.mcpUnauthorized(w, "", "", "Authentication required: send an OAuth access token or an admin-scoped secret key as a Bearer token")
+		s.mcpUnauthorized(w, "", "", "Authentication required: send an OAuth access token, a personal access token or an admin-scoped secret key as a Bearer token")
 		return
 	}
 	principal, status, err := s.mcpAuthenticate(r.Context(), token, now, info)
@@ -212,6 +220,16 @@ func (s *Server) mcpAuthenticate(ctx context.Context, token string, now time.Tim
 		}
 		s.touchKey(ctx, key, now)
 		return &mcpPrincipal{key: key}, http.StatusOK, nil
+
+	case auth.LooksLikePersonalToken(token):
+		t, user, err := s.personalToken(ctx, token, now, info)
+		if err != nil {
+			return nil, 0, err
+		}
+		if t == nil {
+			return nil, http.StatusUnauthorized, nil
+		}
+		return &mcpPrincipal{user: user, pat: t}, http.StatusOK, nil
 
 	case oauth.LooksLikeAccessToken(token) && s.cfg.OAuthEnabled():
 		tok, err := db.OAuthTokenByHash(ctx, s.db.R(), auth.HashSecret(token), db.OAuthAccess)
@@ -420,7 +438,11 @@ func (tc *toolCall) request(method string, params map[string]string, body any) (
 		// The user the grant acts for. There is no cookie session behind it;
 		// handlers that need one (password, sign-out) are not tools.
 		c.session = &db.Session{User: *tc.p.user}
-		c.via.ClientID, c.via.ClientName, c.via.GrantID = tc.p.grant.ClientID, tc.p.grant.ClientName, tc.p.grant.ID
+		if tc.p.pat != nil {
+			c.via.PATID, c.via.PATName = tc.p.pat.ID, tc.p.pat.Name
+		} else {
+			c.via.ClientID, c.via.ClientName, c.via.GrantID = tc.p.grant.ClientID, tc.p.grant.ClientName, tc.p.grant.ID
+		}
 	}
 	return c, nil
 }

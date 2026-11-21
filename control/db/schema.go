@@ -254,6 +254,23 @@ CREATE TABLE oauth_tokens (
 CREATE INDEX oauth_tokens_grant ON oauth_tokens(grant_id);
 CREATE INDEX oauth_tokens_expiry ON oauth_tokens(expires_at);
 `,
+	// 4: personal access tokens (spec/control.md §14): account-level
+	// credentials a user creates for scripts and MCP clients. Only the
+	// SHA-256 of the secret is stored. A revoked token is deleted.
+	`
+CREATE TABLE personal_tokens (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name         TEXT    NOT NULL,
+  scopes       TEXT    NOT NULL,
+  hash         TEXT    NOT NULL UNIQUE,
+  prefix       TEXT    NOT NULL,
+  created_at   INTEGER NOT NULL,
+  expires_at   INTEGER,
+  last_used_at INTEGER
+);
+CREATE INDEX personal_tokens_user ON personal_tokens(user_id);
+`,
 }
 
 func (d *DB) migrate(ctx context.Context) error {

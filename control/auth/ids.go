@@ -36,7 +36,10 @@ func RandomBase62(n int) string {
 const (
 	TokenPrefix  = "pk_"
 	SecretPrefix = "sk_"
-	idChars      = 32
+	// PersonalPrefix marks a personal access token: a credential of a user
+	// (not of a project), valid for everything the user can reach.
+	PersonalPrefix = "pat_"
+	idChars        = 32
 )
 
 // NewWriteToken returns a fresh pk_ token.
@@ -44,6 +47,21 @@ func NewWriteToken() string { return TokenPrefix + RandomBase62(idChars) }
 
 // NewSecretKey returns a fresh sk_ secret.
 func NewSecretKey() string { return SecretPrefix + RandomBase62(idChars) }
+
+// NewPersonalToken returns a fresh pat_ secret.
+func NewPersonalToken() string { return PersonalPrefix + RandomBase62(idChars) }
+
+// LooksLikePersonalToken reports whether s has the shape of a pat_ secret.
+func LooksLikePersonalToken(s string) bool { return shaped(s, PersonalPrefix) }
+
+// PersonalPrefixOf is the display form of a personal access token: "pat_…"
+// + last four characters.
+func PersonalPrefixOf(secret string) string {
+	if len(secret) < 4 {
+		return PersonalPrefix + "…"
+	}
+	return PersonalPrefix + "…" + secret[len(secret)-4:]
+}
 
 // LooksLikeSecretKey reports whether s has the shape of an sk_ secret.
 func LooksLikeSecretKey(s string) bool { return shaped(s, SecretPrefix) }

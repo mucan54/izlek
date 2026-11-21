@@ -16,6 +16,7 @@ Tüm uçlar JSON konuşur. Hata gövdesi: `{"error": {"code": "…", "message": 
 | `POST /api/me/password` | `{current, new}` |
 | `POST /api/me/totp/begin` → `{secret, otpauth_url}` · `POST /api/me/totp/enable` `{code}` · `POST /api/me/totp/disable` `{password}` | TOTP (RFC 6238, SHA-1, 30 sn, 6 hane) |
 | `GET /api/me/connected-apps` · `DELETE /api/me/connected-apps/{id}` | Kullanıcının OAuth ile bağladığı uygulamalar ve iptali (§13.4) |
+| `GET/POST /api/me/tokens` · `DELETE /api/me/tokens/{id}` | Kişisel erişim token'ları (§14) |
 
 - Parola: argon2id (`m=64MiB, t=3, p=1` ya da daha güçlü), en az 10 karakter.
 - Oturum çerezi: `la_session`, `HttpOnly`, `SameSite=Lax`, `Secure` (TLS arkasında), 256 bit rastgele; sunucuda yalnızca SHA-256'sı saklanır; 30 gün kayan süre.
@@ -191,12 +192,14 @@ Desteklenmeyen revizyon: `400` + `-32022`, `data: {supported, requested}`. Yönt
 |---|---|---|
 | `sk_…` (`admin` kapsamlı) | Anahtar; kendi projesinde `admin` rolü | Yalnızca o proje. `create_project` yoktur. `admin` kapsamı yoksa `403` |
 | OAuth erişim token'ı (`oat_…`) | Onaylayan kullanıcı; her org'daki **güncel** rolü | Grant'in kapsamlarıyla sınırlı: `izlek:read`, `izlek:admin` (`admin`, `read`'i içerir) |
+| Kişisel erişim token'ı (`pat_…`, §14) | Token'ın sahibi kullanıcı; her org'daki **güncel** rolü | Token'ın kapsamlarıyla sınırlı; OAuth grant'iyle aynı araç görünürlüğü. Kaynak (`resource`) denetimi yoktur; `LA_PUBLIC_URL` gerekmez |
 
 - Kimlik yok/geçersiz: `401` + `WWW-Authenticate: Bearer [error="invalid_token", …] scope="izlek:read izlek:admin", resource_metadata="<LA_PUBLIC_URL>/.well-known/oauth-protected-resource/mcp"` (`LA_PUBLIC_URL` yoksa `Bearer realm="izlek"`). Bu yanıt gövde okunmadan verilir.
 - Token'ın kapsamı araca yetmiyorsa: `403` + `WWW-Authenticate: Bearer error="insufficient_scope", scope="…", resource_metadata="…"`. `tools/list` zaten yalnızca kapsamın izin verdiği araçları listeler.
 - Erişim token'ı yalnızca `<LA_PUBLIC_URL>/mcp` kaynağı için verilmişse geçerlidir (RFC 8707).
 - Rol denetimi araçların çağırdığı API işleyicilerindedir (§1 tablosu): kapsam rolü aşamaz; başka org'un projesi "bulunamadı"dır.
-- Sınırlar: anahtar/grant başına dakikada 300 araç çağrısı; sorgu yanıtı en çok 256 KB.
+- Sınırlar: anahtar/grant/kişisel token başına dakikada 300 araç çağrısı; sorgu yanıtı en çok 256 KB.
+- Hesap düzeyindeki kimliklerde (OAuth, `pat_`) çağıran birden çok proje görebilir: `project_id` verilmezse araç "project_id is required" hatası döner; sunucu yönergeleri modele önce `list_projects` çağırmasını söyler.
 
 ### 13.3 Araçlar
 
@@ -260,3 +263,49 @@ Kurallar:
 | `oauth.revoke` | kullanıcı | `client_id` | `{…, grant, reason: "user"\|"client"\|"code_replay"\|"refresh_token_reuse"}` |
 
 Araçların yaptığı her değişiklik, UI'dan yapılan aynı değişiklikle aynı kaydı üretir (`project.create`, `token.update`, `flag.update`, …; aktör kullanıcı ya da anahtar) ve `detail.via = {mcp_tool, oauth_client?, oauth_client_id?, oauth_grant?}` alanını taşır. Okuma araçları kayıt üretmez. Kod, token ve anahtar değerleri hiçbir kayda girmez.
+
+## 14. Kişisel erişim token'ları (`pat_`)
+
+Hesap düzeyinde, sabit bir kimlik: başlık gönderebilen ama tarayıcı akışı yürütemeyen istemciler (Claude Code, betikler) için. Token **kullanıcı olarak** davranır: kullanıcının üye olduğu her org'da, her çağrı anındaki rolüyle; kapsamları (`izlek:read`, `izlek:admin`; §13.2 ile aynı anlam) bunu daraltır, asla genişletmez.
+
+Biçim: `pat_` + 32 karakter base62 (`sk_` ile aynı üreteç). Yalnızca SHA-256'sı saklanır (`personal_tokens`, migration 4); değer yalnızca oluşturma yanıtında görünür.
+
+`PersonalToken`: `{ id: "<string>", name, prefix: "pat_…abcd", scopes: ["izlek:read"] | ["izlek:read","izlek:admin"], created_at, last_used_at: ms|null, expires_at: ms|null }`
+
+| Yol | |
+|---|---|
+| `GET /api/me/tokens` | Çıplak dizi, yeni → eski. Süresi dolmuş token'lar listelenmez |
+| `POST /api/me/tokens` | `{name (1–80), scopes, expires_in_days: 30\|90\|365\|null}` → `201` `PersonalToken` + **bir kez** `token: "pat_…"`. `["izlek:admin"]` tek başına verilirse `izlek:read` eklenir. Bilinmeyen kapsam, boş kapsam, geçersiz süre ya da ad → `400 bad_request`. Kullanıcı başına en çok 25 geçerli token: `409 too_many_tokens` |
+| `DELETE /api/me/tokens/{id}` | `204`; başkasının (ya da olmayan) kimlik → `404` |
+
+- Bu üç uç **yalnızca oturum çerezi + `X-LA-CSRF`** ile çalışır. `Authorization: Bearer` taşıyan istek (`pat_`, `sk_`, OAuth) reddedilir (`403`/`401`): hiçbir token başka token üretemez, listeleyemez, iptal edemez.
+- Parola değişimi ve TOTP'nin açılması kullanıcının **tüm** kişisel token'larını siler (`user.password` / `user.totp_enable` kaydında `personal_tokens_revoked`).
+- İptal edilen token silinir; süresi dolanlar saatlik temizlikte silinir. İptal edilmiş, süresi dolmuş ya da bilinmeyen token → `401` (`/mcp`'de §13.2'deki `WWW-Authenticate` ile).
+- `last_used_at` token başına en çok dakikada bir güncellenir.
+
+### 14.1 `/mcp` üzerinde
+
+`Authorization: Bearer pat_…` — aynı kapsamlara sahip bir OAuth grant'i gibi davranır (araç listesi, `create_project`, `project_id` kuralı, kimlik başına hız sınırı). `LA_PUBLIC_URL` gerekmez.
+
+### 14.2 `/api/…` üzerinde
+
+Çerez ve CSRF başlığı gerekmez. İzin verilen uçlar:
+
+| Uç | |
+|---|---|
+| `GET /api/me` | (`csrf` boş döner) |
+| `GET /api/projects`, `POST /api/projects` | |
+| `/api/projects/{pid}/…` altındaki her şey | aşağıdaki iki istisna dışında; rol denetimi §1 tablosundaki gibidir, başka org'un projesi `404` |
+
+**Kapalı** (`403 forbidden`, kapsam ne olursa olsun): `POST /api/setup`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/me/password`, `POST /api/me/totp/*`, `/api/me/tokens…`, `/api/me/connected-apps…`, `/api/orgs/{org}/members…`, `GET /api/orgs/{org}/audit`, `DELETE /api/orgs/{org}`, `DELETE /api/projects/{pid}` (proje kapatma) ve `POST /api/projects/{pid}/deletions` (silme isteği).
+
+Kapsam: `izlek:admin` yoksa durum değiştiren istekler `403 insufficient_scope` döner. Salt okuma sayılan GET-dışı istekler: `POST …/q/{endpoint}` ve `POST …/flags/{key}/evaluate`.
+
+### 14.3 Denetim kaydı
+
+| `action` | `actor` | `target` | `detail` |
+|---|---|---|---|
+| `pat.create` | kullanıcı | token `id` | `{name, scopes, expires_at?}` |
+| `pat.revoke` | kullanıcı | token `id` | `{name, reason: "user"}` |
+
+Token'la yapılan her değişiklik kullanıcının kaydıdır ve `detail.via = {personal_token: <ad>, personal_token_id: "<id>", mcp_tool?}` taşır. Token değeri ve özeti hiçbir kayda girmez.

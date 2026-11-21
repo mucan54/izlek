@@ -102,20 +102,35 @@ type reqCtx struct {
 	// holds that user without a cookie behind it); via only adds to audit
 	// entries how the request got here.
 	via *mcpVia
+	// pat is set when the API request itself carries a personal access
+	// token (session then holds its user, as for an OAuth token).
+	pat *db.PersonalToken
 }
 
 // mcpVia describes the MCP tool call a handler runs for.
 type mcpVia struct {
+	// Tool is the MCP tool; empty for a personal access token used on the
+	// API directly.
 	Tool string
-	// OAuth client the user authorised; empty for sk_ keys.
+	// OAuth client the user authorised; empty for other credentials.
 	ClientID   string
 	ClientName string
 	GrantID    int64
+	// Personal access token the request was made with; 0 for others.
+	PATID   int64
+	PATName string
 }
 
 // annotate adds the MCP origin of a change to an audit detail.
 func (v *mcpVia) annotate(detail any) any {
-	via := map[string]any{"mcp_tool": v.Tool}
+	via := map[string]any{}
+	if v.Tool != "" {
+		via["mcp_tool"] = v.Tool
+	}
+	if v.PATID != 0 {
+		via["personal_token"] = v.PATName
+		via["personal_token_id"] = strconv.FormatInt(v.PATID, 10)
+	}
 	if v.ClientID != "" {
 		via["oauth_client"] = v.ClientName
 		via["oauth_client_id"] = v.ClientID
@@ -197,9 +212,13 @@ func (s *Server) sessionFromCookie(r *http.Request, now time.Time) (*db.Session,
 	return &sess, ck.Value, nil
 }
 
-func (c *reqCtx) authenticate(mode authMode) error {
+func (c *reqCtx) authenticate(rt *route) error {
 	r := c.r
+	mode := rt.auth
 	if token, ok := bearerToken(r); ok {
+		if auth.LooksLikePersonalToken(token) {
+			return c.authenticatePersonal(rt, token)
+		}
 		return c.authenticateKey(mode, token)
 	}
 	if mode == authNone {
@@ -435,7 +454,7 @@ func (c *reqCtx) rawBody() ([]byte, error) {
 	// Browsers can only send application/json cross-origin after a CORS
 	// preflight, which this server never approves. Key-authenticated
 	// clients are not browsers and are spared the check.
-	if c.key == nil {
+	if c.key == nil && c.pat == nil {
 		mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if err != nil || mt != "application/json" {
 			return nil, errCode(http.StatusUnsupportedMediaType, "unsupported_media_type", "İstek gövdesi application/json olmalıdır")

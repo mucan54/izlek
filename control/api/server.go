@@ -232,6 +232,11 @@ func (s *Server) registerRoutes() {
 	s.handle("POST", "/api/me/totp/begin", authSession, s.totpBegin)
 	s.handle("POST", "/api/me/totp/enable", authSession, s.totpEnable)
 	s.handle("POST", "/api/me/totp/disable", authSession, s.totpDisable)
+	// §14 personal access tokens. Session only: no token of any kind can
+	// list, create or revoke tokens.
+	s.handle("GET", "/api/me/tokens", authSession, s.listPersonalTokens)
+	s.handle("POST", "/api/me/tokens", authSession, s.createPersonalToken)
+	s.handle("DELETE", "/api/me/tokens/:id", authSession, s.revokePersonalToken)
 	// §13 applications the user connected through OAuth
 	s.handle("GET", "/api/me/connected-apps", authSession, s.listConnectedApps)
 	s.handle("DELETE", "/api/me/connected-apps/:id", authSession, s.revokeConnectedApp)
@@ -536,7 +541,7 @@ func (s *Server) serveAPI(w *statusWriter, r *http.Request, info *requestInfo) {
 	info.route = matched.pattern
 
 	c := &reqCtx{s: s, w: w, r: r, params: params, now: s.now(), info: info}
-	if err := c.authenticate(matched.auth); err != nil {
+	if err := c.authenticate(matched); err != nil {
 		c.fail(err)
 		return
 	}

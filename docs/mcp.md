@@ -10,7 +10,7 @@ It is an addition to the web UI, not a replacement. Everything an assistant does
 
 - [The endpoint](#the-endpoint)
 - [What you need](#what-you-need)
-- [Two ways to authenticate](#two-ways-to-authenticate)
+- [Three ways to authenticate](#three-ways-to-authenticate)
 - [Connecting Claude](#connecting-claude)
 - [Connecting ChatGPT](#connecting-chatgpt)
 - [Tools](#tools)
@@ -47,22 +47,24 @@ export LA_PUBLIC_INGEST_URL=https://in.example.com
 
 `LA_PUBLIC_URL` must be `https://…`; plain `http://` is accepted for `localhost` only (local development). It is the OAuth issuer and the base of the MCP resource identifier, so it has to be exactly the origin people and assistants use. Behind a reverse proxy, also set `LA_TRUSTED_PROXIES` so that rate limits apply per client address rather than to the proxy.
 
-## Two ways to authenticate
+## Three ways to authenticate
 
-Both resolve to the permission model the rest of the control plane uses.
+All three resolve to the permission model the rest of the control plane uses.
 
-| | Secret key | OAuth |
-|---|---|---|
-| Credential | `Authorization: Bearer sk_…` — an existing secret key with the `admin` scope | An access token issued by the control plane after you approve the assistant on a consent page |
-| Acts as | The key: **one project**, with the admin role in it | **You**: your role in each of your organisations, limited by the scopes you granted |
-| Scope of tools | That project only; `create_project` is not available | Everything your account can do, across organisations |
-| Good for | Claude Code, scripts, any client where you can set a header | claude.ai, Claude Desktop, ChatGPT |
-| Needs `LA_PUBLIC_URL` | No | Yes |
-| Ends when | The key is deleted | You revoke it, you change your password, or after 180 days |
+| | Secret key (`sk_…`) | Personal access token (`pat_…`) | OAuth |
+|---|---|---|---|
+| Scope of access | **One project**, with the admin role in it. `create_project` is not available | **Account-wide**: every organisation and project you can reach, with your role in each, limited by the token's scopes | **Account-wide**, like a personal access token, limited by the scopes you granted |
+| How obtained | Project settings in the web UI (or `create_secret_key`); needs the `admin` key scope | **Account → Personal access tokens** in the web UI (`POST /api/me/tokens`); shown once | The assistant sends you to izlek's consent page; you approve |
+| Sent as | `Authorization: Bearer sk_…` | `Authorization: Bearer pat_…` | Access token the client obtained (refreshes itself) |
+| Which clients | Any that can set a header: Claude Code, Cursor, scripts | Any that can set a header: Claude Code, Cursor, scripts | Clients with a browser flow: claude.ai, Claude Desktop, ChatGPT, Claude Code |
+| Needs `LA_PUBLIC_URL` | No | No | Yes |
+| Also works on the HTTP API | Its project's `/api/projects/{pid}/…` | Yes, see [Personal access tokens](#personal-access-tokens) | No |
+| Lifetime | Until deleted | 30, 90 or 365 days, or no expiry — your choice at creation | Access token 1 hour, refreshed; the grant 180 days |
+| Revocation | Delete the key in project settings | Revoke it in the web UI; **also revoked when you change your password or switch on two-step verification** | **Account → Connected apps**; also on password change or switching on two-step verification |
 
 A key with only the `query` scope is refused (`403`). A browser session cookie is not accepted at `/mcp`.
 
-OAuth scopes:
+Scopes, for OAuth grants and personal access tokens alike:
 
 | Scope | Allows |
 |---|---|
@@ -71,13 +73,36 @@ OAuth scopes:
 
 A scope never gives more than your role: a viewer who grants `izlek:admin` still cannot change anything. On the consent page you can untick "Allow changes" to connect an assistant read-only.
 
+### Personal access tokens
+
+A personal access token is one static credential for "all my accounts": it acts as you, in every organisation you belong to, with whatever role you have there at the moment of each call. Use it where a client can send a header but cannot run a browser sign-in.
+
+```sh
+claude mcp add --transport http izlek https://izlek.example.com/mcp \
+  --header "Authorization: Bearer pat_…"
+```
+
+- **Create** one in the web UI under **Account → Personal access tokens**: a name, the scopes (`izlek:read`, or `izlek:read` + `izlek:admin`) and an expiry (30, 90, 365 days or none). The token (`pat_` + 32 characters) is shown **once**; izlek keeps only its SHA-256 hash. At most 25 per user.
+- **With several projects in reach**, the model should call `list_projects` first and pass `project_id` on every call (the server's instructions tell it so); a tool called without it answers "project_id is required" rather than guessing.
+- **Managing tokens needs a signed-in browser session.** No token — not a personal access token, not a secret key, not an OAuth token — can list, create or revoke personal access tokens, so a leaked credential cannot mint itself a successor.
+- **On the HTTP API** the same token works for scripts: `GET /api/me`, `GET`/`POST /api/projects` and everything under `/api/projects/{pid}/…` (tokens, keys, flags, insights, dashboards, the query proxy), with the same role checks as the UI. With only `izlek:read`, requests that change something answer `403 insufficient_scope`. Out of its reach whatever the scope: signing out, password and two-step verification, personal access tokens, connected apps, organisation members, the audit log, deleting an organisation, **closing a project** and **deletion requests**.
+- **Audit:** creating and revoking a token is recorded (`pat.create`, `pat.revoke`). Every change made with one is recorded as yours, with `via.personal_token` (its name) and `via.personal_token_id`.
+- Prefer a token with only `izlek:read` unless you are setting something up, give it an expiry, and treat it like a password: it reaches everything you can reach.
+
 ## Connecting Claude
 
 Sources: Anthropic's [Authentication for connectors](https://claude.com/docs/connectors/building/authentication), [Add a connector that isn't in the directory](https://claude.com/docs/connectors/custom/add-unlisted) and [Claude Code: MCP](https://code.claude.com/docs/en/mcp), read on 2026-11-19.
 
 ### Claude Code (CLI)
 
-With a secret key (project-scoped, no browser step):
+With a personal access token (all your organisations and projects, no browser step):
+
+```sh
+claude mcp add --transport http izlek https://izlek.example.com/mcp \
+  --header "Authorization: Bearer pat_…"
+```
+
+With a secret key (one project, no browser step):
 
 ```sh
 claude mcp add --transport http izlek https://izlek.example.com/mcp \
@@ -190,7 +215,8 @@ Details:
   ```
 
   (Session cookie; `DELETE` needs the `X-LA-CSRF` header like every other change. In the web UI the same list, with a Revoke button, is under **Account → Connected apps**.) Revoking ends the access and refresh tokens of that grant immediately.
-- **Changing your password, or switching on two-step verification, revokes all your grants.**
+- **Personal access tokens** — revoke one under **Account → Personal access tokens** (`DELETE /api/me/tokens/{id}`); it stops working at once. Expired tokens stop by themselves.
+- **Changing your password, or switching on two-step verification, revokes all your grants and all your personal access tokens.**
 - An assistant can revoke its own tokens (`POST /oauth/revoke`, RFC 7009), which is what "disconnect" in a client usually does.
 - Grants end by themselves after 180 days; an unused refresh token after 30 days.
 - **Secret keys** are deleted in the web UI under the project's settings (or `DELETE /api/projects/{pid}/keys/{id}`).
@@ -246,7 +272,7 @@ Read-only tool calls are not audited (they appear in the request log as `route: 
 
 Metrics (`/metrics`): `la_control_mcp_requests_total{result}` and `la_control_oauth_events_total{event}`.
 
-Database: migration 3 adds `oauth_clients`, `oauth_grants`, `oauth_codes` and `oauth_tokens` to the control database. Expired rows are removed hourly.
+Database: migration 3 adds `oauth_clients`, `oauth_grants`, `oauth_codes` and `oauth_tokens` to the control database; migration 4 adds `personal_tokens`. Expired rows are removed hourly.
 
 ## OAuth endpoints
 
@@ -293,6 +319,8 @@ They connect the pinned official clients with a secret key and through the whole
 | "This connection cannot continue — client metadata document could not be fetched" | The control plane cannot make outbound HTTPS requests directly. Set `LA_OAUTH_CLIENT_REGISTRATION=dcr` and connect again. |
 | "redirect_uri is not registered for this client" | The client changed its callback address since it registered; remove and add the connector again. |
 | The assistant has to be connected again after working for a while | Its refresh token was presented twice (see known trade-offs), or you changed your password. |
+| `401` with a `pat_` token that used to work | It expired, was revoked, or you changed your password or switched on two-step verification. Create a new one. |
+| A tool says "project_id is required" | An account-wide credential sees several projects. Call `list_projects` and pass `project_id`. |
 | `403` "does not have the admin scope" with a secret key | The key has only the `query` scope. Create one with `admin`. |
 | A tool says `forbidden` although the grant has `izlek:admin` | Your role in that organisation is viewer or member. |
 | A tool says `not_found` for a project that exists | It belongs to an organisation you are not a member of, or — with a secret key — it is not the key's project. |

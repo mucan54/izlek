@@ -315,9 +315,20 @@ func (s *Server) changePassword(c *reqCtx) (any, error) {
 		if err != nil {
 			return err
 		}
+		tokens, err := db.DeleteUserPersonalTokens(c.ctx(), tx, uid)
+		if err != nil {
+			return err
+		}
 		var detail any
-		if revoked > 0 {
-			detail = map[string]any{"oauth_grants_revoked": revoked}
+		if revoked > 0 || tokens > 0 {
+			d := map[string]any{}
+			if revoked > 0 {
+				d["oauth_grants_revoked"] = revoked
+			}
+			if tokens > 0 {
+				d["personal_tokens_revoked"] = tokens
+			}
+			detail = d
 		}
 		return c.audit(tx, 0, "user.password", strconv.FormatInt(uid, 10), detail)
 	})
@@ -384,9 +395,20 @@ func (s *Server) totpEnable(c *reqCtx) (any, error) {
 		if err != nil {
 			return err
 		}
+		tokens, err := db.DeleteUserPersonalTokens(c.ctx(), tx, u.ID)
+		if err != nil {
+			return err
+		}
 		var detail any
-		if revoked > 0 {
-			detail = map[string]any{"oauth_grants_revoked": revoked}
+		if revoked > 0 || tokens > 0 {
+			d := map[string]any{}
+			if revoked > 0 {
+				d["oauth_grants_revoked"] = revoked
+			}
+			if tokens > 0 {
+				d["personal_tokens_revoked"] = tokens
+			}
+			detail = d
 		}
 		return c.audit(tx, 0, "user.totp_enable", strconv.FormatInt(u.ID, 10), detail)
 	})

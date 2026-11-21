@@ -446,3 +446,95 @@ func TestConsentInABrowser(t *testing.T) {
 		}
 	}
 }
+
+// TestPersonalAccessToken: one pat_ bearer, through the official clients of
+// both generations, works in the projects of two organisations.
+func TestPersonalAccessToken(t *testing.T) {
+	s := start(t)
+	ctx := context.Background()
+	// A second organisation of the same user, with its own project.
+	hasher := auth.NewHasher(auth.Params{MemoryKiB: 64, Time: 1, Threads: 1}, 1)
+	second, err := app.Bootstrap(ctx, s.db, hasher, app.BootstrapInput{Email: testEmail, Password: testPassword, Org: "Beta", Project: "Beta app"}, s.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.OrgID == s.boot.OrgID || second.ProjectID == s.boot.ProjectID {
+		t.Fatalf("second bootstrap: %+v", second)
+	}
+
+	// The token is created the way the web UI does it: session + CSRF.
+	call := func(method, path string, body any, csrf string) (*http.Response, []byte) {
+		t.Helper()
+		var rd io.Reader
+		if body != nil {
+			raw, _ := json.Marshal(body)
+			rd = bytes.NewReader(raw)
+		}
+		req, _ := http.NewRequest(method, s.base+path, rd)
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: "la_session", Value: s.cookie})
+		if csrf != "" {
+			req.Header.Set("X-LA-CSRF", csrf)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		return resp, raw
+	}
+	var me struct {
+		CSRF string `json:"csrf"`
+	}
+	_, raw := call("GET", "/api/me", nil, "")
+	json.Unmarshal(raw, &me)
+	var pat struct {
+		ID    string `json:"id"`
+		Token string `json:"token"`
+	}
+	resp, raw := call("POST", "/api/me/tokens", map[string]any{"name": "conformance", "scopes": []string{"izlek:read", "izlek:admin"}, "expires_in_days": 30}, me.CSRF)
+	json.Unmarshal(raw, &pat)
+	if resp.StatusCode != 201 || !strings.HasPrefix(pat.Token, "pat_") {
+		t.Fatalf("create token: %d %s", resp.StatusCode, raw)
+	}
+
+	out := s.node("pat.mjs", "IZLEK_PAT="+pat.Token, "IZLEK_SECOND_PROJECT_ID="+strconv.FormatUint(uint64(second.ProjectID), 10))
+	wantVersions(t, out, "versions", "2026-07-28", "2025-11-25")
+
+	if n := s.count(`SELECT COUNT(*) FROM flags WHERE key IN ('pat_modern', 'pat_legacy')`); n != 4 {
+		t.Fatalf("%d flags created, want 2 in each of 2 projects", n)
+	}
+	user := "user:" + strconv.FormatInt(s.boot.UserID, 10)
+	created := 0
+	for _, r := range s.audit() {
+		if strings.Contains(r.Detail, pat.Token) || strings.Contains(r.Detail, pat.Token[4:]) {
+			t.Fatalf("audit entry %s leaks the token", r.Action)
+		}
+		if r.Action == "flag.create" {
+			if r.Actor != user || !strings.Contains(r.Detail, `"personal_token":"conformance"`) || !strings.Contains(r.Detail, `"personal_token_id":"`+pat.ID+`"`) || !strings.Contains(r.Detail, `"mcp_tool":"create_flag"`) {
+				t.Fatalf("flag.create by %s: %s", r.Actor, r.Detail)
+			}
+			created++
+		}
+	}
+	if created != 4 {
+		t.Fatalf("%d audited flag.create entries", created)
+	}
+
+	// Revoked in the UI, it stops working at once.
+	if resp, raw := call("DELETE", "/api/me/tokens/"+pat.ID, nil, me.CSRF); resp.StatusCode != 204 {
+		t.Fatalf("revoke: %d %s", resp.StatusCode, raw)
+	}
+	req, _ := http.NewRequest("POST", s.base+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+pat.Token)
+	after, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after.Body.Close()
+	if after.StatusCode != 401 {
+		t.Fatalf("revoked token: %d", after.StatusCode)
+	}
+}

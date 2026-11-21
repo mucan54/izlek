@@ -81,10 +81,11 @@ Geçersiz değer servisin başlamasını engeller (çıkış kodu 2); hatalı de
 Kullanım, bağlantı adımları (Claude, ChatGPT) ve araç listesi: `docs/mcp.md`. Sözleşme: `spec/control.md` §13. Özet:
 
 - `POST /mcp` — Streamable HTTP, durumsuz; yanıtlar tek JSON nesnesidir. Protokol katmanı `control/mcp` paketidir; resmî Go SDK'sı kullanılmadı, çünkü 2026-07-28 revizyonunu bilen sürümleri Go 1.25 ister, depo Go 1.24 ile derlenir.
-- İki kimlik: `Authorization: Bearer sk_…` (`admin` kapsamlı anahtar; yalnızca kendi projesi) ya da control plane'in verdiği OAuth erişim token'ı (onaylayan kullanıcı adına, kullanıcının rolleriyle; kapsamlar `izlek:read`, `izlek:admin`).
+- Üç kimlik: `Authorization: Bearer sk_…` (`admin` kapsamlı anahtar; yalnızca kendi projesi), kişisel erişim token'ı `pat_…` (hesap düzeyinde: kullanıcının tüm org ve projeleri, her birindeki güncel rolüyle) ya da control plane'in verdiği OAuth erişim token'ı (onaylayan kullanıcı adına, kullanıcının rolleriyle). `pat_` ve OAuth için kapsamlar: `izlek:read`, `izlek:admin`.
+- Kişisel erişim token'ları (`spec/control.md` §14): `GET/POST /api/me/tokens`, `DELETE /api/me/tokens/{id}` — yalnızca oturum çerezi + CSRF ile (hiçbir token başka token yönetemez); değer bir kez gösterilir, yalnızca SHA-256'sı saklanır; kullanıcı başına en çok 25; parola değişimi ve TOTP'nin açılması hepsini iptal eder. `/mcp`'de ve `/api/…` üzerinde (`GET /api/me`, `/api/projects`, `/api/projects/{pid}/…`) geçerlidir; hesap, üye, denetim kaydı ve org uçları ile proje kapatma ve silme istekleri `pat_` ile **kapalıdır**; `izlek:admin` kapsamı olmayan token değişiklik yapamaz (`403 insufficient_scope`).
 - 22 araç (proje, token, anahtar, SDK kurulum parçacıkları, kurulum doğrulama, flag, analitik sorgular). Her araç ilgili API işleyicisini çağıranın kimliğiyle çalıştırır: doğrulama, rol denetimi ve denetim kaydı API ile **aynıdır**. Proje kapatma, silme işlemleri, üye yönetimi ve silme istekleri araç olarak sunulmaz.
 - OAuth yetkilendirme sunucusu control plane'in içindedir: `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource`, `/oauth/authorize` (giriş + onay sayfası; Go ile sunucuda üretilir, İngilizce/Türkçe), `/oauth/token`, `/oauth/register`, `/oauth/revoke`. Kullanıcının bağladığı uygulamalar: `GET /api/me/connected-apps`, iptal: `DELETE /api/me/connected-apps/{id}` (UI sayfası henüz yok).
-- Veritabanı: migration 3 (`oauth_clients`, `oauth_grants`, `oauth_codes`, `oauth_tokens`). Süresi dolan satırlar saatte bir temizlenir.
+- Veritabanı: migration 3 (`oauth_clients`, `oauth_grants`, `oauth_codes`, `oauth_tokens`), migration 4 (`personal_tokens`). Süresi dolan satırlar saatte bir temizlenir.
 
 ## Yayınlama
 

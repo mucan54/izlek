@@ -831,6 +831,9 @@ func PruneOAuth(ctx context.Context, tx *sql.Tx, now time.Time) error {
 	if err := db.PruneOAuth(ctx, tx, now.UnixMilli(), oauthKeepEnded.Milliseconds()); err != nil {
 		return err
 	}
+	if _, err := db.PrunePersonalTokens(ctx, tx, now.UnixMilli()); err != nil {
+		return err
+	}
 	_, err := db.PruneOAuthClients(ctx, tx, now.UnixMilli(), now.Add(-24*time.Hour).UnixMilli(), now.Add(-oauthGrantTTL).UnixMilli())
 	return err
 }
