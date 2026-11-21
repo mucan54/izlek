@@ -170,6 +170,10 @@ func bootstrap(args []string, cfg config.Config, cfgErr error, log *slog.Logger,
 			*f.v = strings.TrimSpace(getenv(f.env))
 		}
 	}
+	if in.Email == "" && getenv("LA_BOOTSTRAP_EMAIL") == "" && in.Org != "" {
+		fmt.Fprintln(stderr, "la-control bootstrap: the owner's e-mail is empty (--email or LA_BOOTSTRAP_EMAIL; on Coolify: set ADMIN_EMAIL with Runtime enabled and redeploy)")
+		return exitUsage
+	}
 	if in.Email == "" || in.Org == "" || in.Project == "" {
 		fmt.Fprintln(stderr, "la-control bootstrap: --email, --org and --project are required (or LA_BOOTSTRAP_EMAIL, LA_BOOTSTRAP_ORG, LA_BOOTSTRAP_PROJECT)")
 		return exitUsage

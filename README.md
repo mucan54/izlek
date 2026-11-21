@@ -17,7 +17,7 @@
 - [Why](#why)
 - [What you get](#what-you-get)
 - [Architecture](#architecture)
-- [Quick start](#quick-start)
+- [Quick start](#quick-start) — [Coolify](#coolify-recommended)
 - [Sending events](#sending-events)
 - [Identity](#identity)
 - [Feature flags](#feature-flags)
@@ -163,6 +163,27 @@ The normative contracts — wire format, WAL, manifests, Parquet schema, flags, 
 
 ## Quick start
 
+### Coolify (recommended)
+
+izlek is designed to be self-hosted on [Coolify](https://coolify.io) as a single resource:
+
+1. **+ New → Public Repository** → `https://github.com/mucan54/izlek`, branch `main`.
+2. **Build Pack:** Docker Compose · **Base Directory:** `/` · **Docker Compose Location:** `/docker-compose.coolify.yml`.
+3. **Environment Variables** (all *Runtime*):
+
+   ```
+   ADMIN_EMAIL=you@example.com
+   LA_PUBLIC_URL=https://analytics.example.com
+   LA_PUBLIC_INGEST_URL=https://in.analytics.example.com
+   ```
+
+4. **Domains:** `control` → `https://analytics.example.com` (port 8090), `ingest` → `https://in.analytics.example.com` (port 8080). No domain on `init`, `bootstrap` or the other services.
+5. **Deploy.** The first build compiles the Rust services and takes about 30 minutes; set `CARGO_BUILD_JOBS=1` if the server runs out of memory.
+6. Sign in at `https://analytics.example.com` with `ADMIN_EMAIL` and the generated `SERVICE_PASSWORD_ADMIN` (shown under Environment Variables), then change the password under **Account**.
+
+The full guide — DNS, every variable, S3 storage, backups, updates, connecting Claude/ChatGPT and a troubleshooting table of real deployment errors — is in **[`deploy/coolify/README.md`](deploy/coolify/README.md)**.
+
+
 ### Look around with demo data
 
 Requires Go 1.24+, Rust (the version is pinned in `engine/rust-toolchain.toml`) and Node 22.
@@ -204,12 +225,6 @@ docker compose run --rm control bootstrap --email you@example.com --password '�
 ```
 
 Only ingestion (`8080`) and the control plane (`8090`) are published; every container has a health check (the images are shell-less, so they carry a small probe binary). Put a TLS-terminating proxy in front and set `LA_TRUSTED_PROXIES` and `LA_COOKIE_SECURE` accordingly. `deploy/compose/smoke.sh` builds the images, boots the stack and runs an end-to-end check; CI runs it on every push.
-
-### Coolify
-
-[`docker-compose.coolify.yml`](docker-compose.coolify.yml) deploys the whole platform as one [Coolify](https://coolify.io) resource: choose the **Docker Compose** build pack, set *Docker Compose Location* to `/docker-compose.coolify.yml`, fill in `ADMIN_EMAIL` and deploy. Coolify assigns the two public domains (UI and ingestion) and generates the admin password and internal secret; the stack creates the first account by itself. Guide: [`deploy/coolify/README.md`](deploy/coolify/README.md).
-
-CI runs this file with plain Docker Compose on every push; it has not been tried on a real Coolify instance yet.
 
 ### Several machines
 
