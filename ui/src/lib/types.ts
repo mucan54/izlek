@@ -68,6 +68,22 @@ export interface Key {
   secret?: string
 }
 
+/** An account-wide personal access token (`pat_…`): acts as the user, limited by its scopes. */
+export interface AccessToken {
+  id: string
+  name: string
+  /** `pat_…abcd` */
+  prefix: string
+  /** `izlek:read`, optionally `izlek:admin` */
+  scopes: string[]
+  created_at: number
+  last_used_at: number | null
+  /** null = no expiry */
+  expires_at: number | null
+  /** the token itself; only in the response of the creating POST */
+  token?: string
+}
+
 /** An application the user approved on the OAuth consent page (docs/mcp.md, "Revoking access"). */
 export interface ConnectedApp {
   id: string | number

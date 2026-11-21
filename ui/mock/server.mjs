@@ -65,9 +65,10 @@ export const createMockServer = (options = {}) => {
    * Switches tests can flip at runtime.
    * - `mcp: false` — as with LA_MCP_ENABLED=false (or a control plane that predates the MCP server):
    *   /.well-known/* falls through to the SPA shell and the connected-apps endpoints answer 404.
+   * - `pats: false` — a control plane that predates personal access tokens: /api/me/tokens answers 404.
    * - `oauth: false` — as without LA_PUBLIC_URL: the metadata document answers 404, only secret keys work.
    */
-  const hooks = { rawReplay: false, mcp: true, oauth: true }
+  const hooks = { rawReplay: false, mcp: true, oauth: true, pats: true }
 
   const db = {
     users: [], // { id, email, password, totp_secret, totp_pending, totp_enabled }
@@ -84,6 +85,7 @@ export const createMockServer = (options = {}) => {
     deletions: [],
     audit: [],
     grants: [], // OAuth grants (docs/mcp.md): ConnectedApp + user_id
+    pats: [], // personal access tokens: AccessToken + user_id + hash
     sessions: new Map(), // sha256(cookie) → { user_id, csrf, expires }
     loginFailures: new Map(), // email → [ts…]
     seq: 1,
@@ -290,6 +292,7 @@ export const createMockServer = (options = {}) => {
     ctx.user.password = hashPassword(ctx.body.new)
     audit(ctx.user.id, 'user.password', ctx.user.id)
     revokeAllGrants(ctx.user.id)
+    revokeAllPats(ctx.user.id)
     return { ok: true }
   })
   route('POST', '/api/me/totp/begin', (ctx) => {
@@ -306,6 +309,7 @@ export const createMockServer = (options = {}) => {
     ctx.user.totp_enabled = true
     audit(ctx.user.id, 'user.totp_enable', ctx.user.id)
     revokeAllGrants(ctx.user.id)
+    revokeAllPats(ctx.user.id)
     return { ok: true }
   })
   route('POST', '/api/me/totp/disable', (ctx) => {
@@ -376,6 +380,56 @@ export const createMockServer = (options = {}) => {
     if (i < 0) throw notFound()
     audit(ctx.user.id, 'oauth.revoke', db.grants[i].client_name, { oauth_grant: db.grants[i].id, reason: 'user' })
     db.grants.splice(i, 1)
+    return null
+  })
+
+  // -- personal access tokens of the signed-in user (`pat_…`, account-wide) --
+  const PAT_MAX = 25
+  const PAT_DAYS = [30, 90, 365]
+  const patView = ({ user_id: _user, hash: _hash, ...t }) => t
+  const revokeAllPats = (userId) => {
+    db.pats = db.pats.filter((t) => t.user_id != userId)
+  }
+  const livePats = (userId) => db.pats.filter((t) => t.user_id == userId && (t.expires_at == null || t.expires_at > now()))
+  route('GET', '/api/me/tokens', (ctx) => {
+    if (!hooks.pats) throw notFound()
+    return livePats(ctx.user.id).sort((a, b) => b.created_at - a.created_at || b.seq - a.seq).map(({ seq: _seq, ...t }) => patView(t))
+  })
+  route('POST', '/api/me/tokens', (ctx) => {
+    if (!hooks.pats) throw notFound()
+    const name = text(ctx.body.name, 'name', 80).trim()
+    if (!name) throw badRequest('"name" zorunludur')
+    const scopes = ctx.body.scopes
+    const key = Array.isArray(scopes) ? [...new Set(scopes)].sort().join(' ') : ''
+    if (key != 'izlek:read' && key != 'izlek:admin izlek:read') throw badRequest('"scopes": ["izlek:read"] ya da ["izlek:read","izlek:admin"]')
+    const days = ctx.body.expires_in_days ?? null
+    if (days !== null && !PAT_DAYS.includes(days)) throw badRequest('"expires_in_days": 30, 90, 365 ya da null')
+    if (livePats(ctx.user.id).length >= PAT_MAX) throw new HttpError(400, 'too_many_tokens', `En çok ${PAT_MAX} erişim token'ı oluşturulabilir`)
+    const token = 'pat_' + base62(40)
+    const pat = {
+      user_id: ctx.user.id,
+      id: String(nextId()),
+      seq: db.seq,
+      name,
+      prefix: 'pat_…' + token.slice(-4),
+      scopes: key == 'izlek:read' ? ['izlek:read'] : ['izlek:read', 'izlek:admin'],
+      created_at: now(),
+      last_used_at: null,
+      expires_at: days === null ? null : now() + days * 86_400_000,
+      hash: sha256(token),
+    }
+    db.pats.push(pat)
+    audit(ctx.user.id, 'token.personal.create', pat.id, { name, scopes: pat.scopes })
+    const { seq: _seq, ...view } = pat
+    sendJson(ctx.res, 201, { ...patView(view), token })
+  })
+  route('DELETE', '/api/me/tokens/:id', (ctx) => {
+    if (!hooks.pats) throw notFound()
+    // someone else's token does not exist as far as this user can tell
+    const i = db.pats.findIndex((t) => t.user_id == ctx.user.id && t.id == ctx.params[0])
+    if (i < 0) throw notFound()
+    audit(ctx.user.id, 'token.personal.revoke', db.pats[i].id, { name: db.pats[i].name })
+    db.pats.splice(i, 1)
     return null
   })
 

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { KEY_PLACEHOLDER, MCP_TOOLS, OAUTH_METADATA_PATH, claudeCodeCommand, classifyOAuthMetadata, clientSite, mcpEndpoint, probeMcp, summarizeScopes } from '../../src/lib/mcp'
+import {
+  KEY_PLACEHOLDER, MCP_TOOLS, OAUTH_METADATA_PATH, PAT_DEFAULT_EXPIRY_DAYS, PAT_EXPIRY_DAYS, PAT_PLACEHOLDER, claudeCodeCommand, classifyOAuthMetadata, clientSite, mcpEndpoint, probeMcp, scopesFor,
+  summarizeScopes,
+} from '../../src/lib/mcp'
 import { fakeFetch, json } from './helpers'
 
 const SPA_SHELL = '<!doctype html>\n<html lang="tr"><head><title>İzlek</title></head><body><div id="app"></div></body></html>'
@@ -55,8 +58,11 @@ test('Claude Code commands are the ones docs/mcp.md gives, with a placeholder fo
   const url = 'https://izlek.example.com/mcp'
   assert.equal(claudeCodeCommand(url, 'oauth'), 'claude mcp add --transport http izlek https://izlek.example.com/mcp')
   assert.equal(claudeCodeCommand(url, 'key'), 'claude mcp add --transport http izlek https://izlek.example.com/mcp \\\n  --header "Authorization: Bearer sk_…"')
+  assert.equal(claudeCodeCommand(url, 'pat'), 'claude mcp add --transport http izlek https://izlek.example.com/mcp --header "Authorization: Bearer pat_…"')
   assert.equal(KEY_PLACEHOLDER, 'sk_…')
+  assert.equal(PAT_PLACEHOLDER, 'pat_…')
   assert.ok(!/sk_[0-9A-Za-z]/.test(claudeCodeCommand(url, 'key')), 'nothing that looks like a real key')
+  assert.ok(!/pat_[0-9A-Za-z]/.test(claudeCodeCommand(url, 'pat')), 'nothing that looks like a real token')
 
   let doc: string
   try {
@@ -66,6 +72,12 @@ test('Claude Code commands are the ones docs/mcp.md gives, with a placeholder fo
   }
   const blocks = [...doc.matchAll(/```sh\n([\s\S]*?)\n```/g)].map((m) => m[1])
   for (const auth of ['oauth', 'key'] as const) assert.ok(blocks.includes(claudeCodeCommand(url, auth)), `docs/mcp.md has the ${auth} command verbatim`)
+  // The access-token section is being added to the doc separately: checked once the doc mentions pat_ at all,
+  // and without regard to line continuations (the doc may break the command over two lines).
+  if (!doc.includes('pat_')) return
+  const oneLine = (cmd: string) => cmd.replace(/\s*\\\n\s*/g, ' ').replace(/[ \t]+/g, ' ').trim()
+  const lines = blocks.flatMap((b) => oneLine(b).split('\n').map((l) => l.trim()))
+  assert.ok(lines.includes(claudeCodeCommand(url, 'pat')), 'docs/mcp.md has the access-token command')
 })
 
 test('tool list: 22 tools in three groups, the writing ones marked', () => {
@@ -116,4 +128,14 @@ test('clientSite: the host of a metadata document, nothing for self-registered c
   assert.equal(clientSite({ client_kind: 'cimd', client_id: 'oc_abc' }), null)
   assert.equal(clientSite({ client_kind: 'dcr', client_id: 'oc_AbCdEf0123456789AbCdEf01' }), null)
   assert.equal(clientSite({ client_kind: 'dcr', client_id: 'https://evil.example/claims-to-be-a-site' }), null, 'a self-registered client never gets a site')
+})
+
+test('access tokens: scopes for the two access levels, and the lifetimes on offer', () => {
+  assert.deepEqual(scopesFor('read'), ['izlek:read'])
+  assert.deepEqual(scopesFor('admin'), ['izlek:read', 'izlek:admin'])
+  assert.deepEqual(summarizeScopes(scopesFor('read')).level, 'read')
+  assert.deepEqual(summarizeScopes(scopesFor('admin')).level, 'admin')
+  assert.deepEqual(PAT_EXPIRY_DAYS, [30, 90, 365, null])
+  assert.ok(PAT_EXPIRY_DAYS.includes(PAT_DEFAULT_EXPIRY_DAYS))
+  assert.equal(PAT_DEFAULT_EXPIRY_DAYS, 90)
 })

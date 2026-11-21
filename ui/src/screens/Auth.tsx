@@ -5,6 +5,7 @@ import { ApiError, type Api } from '../lib/api'
 import { useAction } from '../lib/hooks'
 import { useApp } from '../lib/session'
 import { Button, Card, ErrorNote, Field, Input, LanguageSelect, PageHead, focusOnMount, toast } from '../components/ui'
+import { AccessTokens } from './AccessTokens'
 import { ConnectedApps } from './Mcp'
 
 const MIN_PASSWORD = 10
@@ -272,6 +273,7 @@ export const Account = () => {
         </Card>
         <PasswordCard onChanged={credentialsChanged} />
         <TotpCard onEnabled={credentialsChanged} />
+        <AccessTokens stamp={credentialStamp} />
         <ConnectedApps stamp={credentialStamp} />
       </div>
     </>

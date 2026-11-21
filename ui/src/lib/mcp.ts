@@ -77,11 +77,27 @@ export const mcpEndpoint = (pageOrigin: string, status: McpStatus | undefined): 
 /** Placeholder shown where a secret key goes. The UI never puts a real key into a command. */
 export const KEY_PLACEHOLDER = 'sk_…'
 
-/** `claude mcp add` as docs/mcp.md gives it: with a secret key in a header, or bare (OAuth, then `/mcp` inside Claude Code). */
-export const claudeCodeCommand = (url: string, auth: 'oauth' | 'key'): string => {
+/** Placeholder for an account-wide personal access token. */
+export const PAT_PLACEHOLDER = 'pat_…'
+
+/**
+ * `claude mcp add` as docs/mcp.md gives it: with a personal access token or a
+ * project secret key in a header, or bare (OAuth, then `/mcp` inside Claude Code).
+ */
+export const claudeCodeCommand = (url: string, auth: 'oauth' | 'key' | 'pat'): string => {
   const base = `claude mcp add --transport http izlek ${url}`
+  if (auth == 'pat') return `${base} --header "Authorization: Bearer ${PAT_PLACEHOLDER}"`
   return auth == 'key' ? `${base} \\\n  --header "Authorization: Bearer ${KEY_PLACEHOLDER}"` : base
 }
+
+/** What a new access token may do: read-only, or read and change. */
+export type AccessLevel = 'read' | 'admin'
+export const scopesFor = (level: AccessLevel): string[] => (level == 'admin' ? [SCOPE_READ, SCOPE_ADMIN] : [SCOPE_READ])
+
+/** Lifetimes offered for a new access token, in days; null = no expiry. */
+export const PAT_EXPIRY_DAYS: readonly (number | null)[] = [30, 90, 365, null]
+export const PAT_DEFAULT_EXPIRY_DAYS = 90
+export const PAT_NAME_MAX = 80
 
 export interface McpTool {
   name: string

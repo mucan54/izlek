@@ -103,6 +103,14 @@ export const AiAssistants = () => {
           {client == 'code' && (
             <div class="stack" data-testid="mcp-client-code">
               <section class="prose">
+                <h3>{S.mcp.code.patTitle}</h3>
+                <p class="muted">{S.mcp.code.patIntro}</p>
+                <Command code={claudeCodeCommand(url, 'pat')} testId="mcp-cmd-pat" />
+                <p>
+                  {S.mcp.code.patHelp} <Link href="/account">{S.mcp.code.patLink}</Link>
+                </p>
+              </section>
+              <section class="prose">
                 <h3>{S.mcp.code.keyTitle}</h3>
                 <p class="muted">{S.mcp.code.keyIntro}</p>
                 <Command code={claudeCodeCommand(url, 'key')} testId="mcp-cmd-key" />

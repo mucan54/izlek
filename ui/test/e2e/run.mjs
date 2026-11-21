@@ -910,8 +910,14 @@ await step('AI assistants: MCP address with copy, connect steps per client; note
     const keyCommand = `claude mcp add --transport http izlek ${endpoint} \\\n  --header "Authorization: Bearer sk_…"`
     assert.equal(await page.getByTestId('mcp-cmd-key').innerText(), keyCommand)
     assert.equal(await page.getByTestId('mcp-cmd-oauth').innerText(), `claude mcp add --transport http izlek ${endpoint}`)
+    // the account-wide access token comes first: all projects, with a link to where tokens are made
+    const patCommand = `claude mcp add --transport http izlek ${endpoint} --header "Authorization: Bearer pat_…"`
+    assert.equal(await page.getByTestId('mcp-cmd-pat').innerText(), patCommand)
+    assert.deepEqual(await code.getByRole('heading', { level: 3 }).allInnerTexts(), ['Kişisel erişim token’ıyla (tüm projeleriniz)', 'Proje gizli anahtarıyla (yalnızca bu proje)', 'OAuth ile'])
     await code.getByRole('button', { name: 'Kopyala' }).first().click()
-    assert.equal(await clipboard(), keyCommand)
+    assert.equal(await clipboard(), patCommand)
+    assert.equal(await code.getByRole('link', { name: 'Hesap → Erişim token’ları' }).getAttribute('href'), '/account')
+    assert.ok(!/pat_[0-9A-Za-z]{4,}/.test(await page.content()), 'no real access token on the page')
     // the project has a secret key by now; only the placeholder is ever rendered
     assert.ok(mock.db.keys.some((k) => k.project_id == pid))
     assert.ok(!/sk_[0-9A-Za-z]{4,}/.test(await page.content()), 'no real secret key on the page')
@@ -949,11 +955,12 @@ await step('AI assistants: MCP address with copy, connect steps per client; note
     await page.reload()
     await status('keys').waitFor()
     const note = await status('keys').innerText()
-    assert.match(note, /yalnızca gizli anahtarlar çalışır/)
+    assert.match(note, /yalnızca erişim token’ları ve gizli anahtarlar çalışır/)
     assert.match(note, /LA_PUBLIC_URL ayarı \(https adresi\)/)
-    assert.match(note, /claude\.ai ve ChatGPT bağlanamaz; Claude Code gizli anahtarla bağlanabilir/)
+    assert.match(note, /claude\.ai ve ChatGPT bağlanamaz; Claude Code erişim token’ı ya da gizli anahtarla bağlanabilir/)
     assert.equal(await page.getByTestId('mcp-url').inputValue(), endpoint)
     assert.equal(await page.getByTestId('mcp-cmd-key').innerText(), keyCommand, 'the secret-key form still applies')
+    assert.equal(await page.getByTestId('mcp-cmd-pat').count(), 1, 'and so does the access-token form')
     assert.equal(await page.getByTestId('mcp-cmd-oauth').count(), 0, 'the OAuth form is not offered')
     await page.getByTestId('mcp-code-oauth-off').waitFor()
     await shot('29g-mcp-oauth-off')
@@ -1061,6 +1068,155 @@ await step('connected apps: listed with their access in plain words, revoked thr
   } finally {
     mock.hooks.mcp = true
     mock.db.grants = mock.db.grants.filter((g) => g.id != foreign.id && g.user_id != owner.id)
+  }
+})
+
+await step('access tokens: create (read-only, 30 days), shown once with copy, listed, limit of 25, revoked through the confirm dialog; hidden on an older server', async () => {
+  const owner = mock.db.users.find((u) => u.email == OWNER.email)
+  const mine = () => mock.db.pats.filter((t) => t.user_id == owner.id)
+  try {
+    await go('/account')
+    await page.getByRole('heading', { name: 'Erişim token’ları' }).waitFor()
+    const list = page.getByTestId('access-tokens')
+    await list.getByText('Erişim token’ı yok').waitFor()
+    await list.getByText('Parolanızı değiştirmek ya da iki adımlı doğrulamayı açmak tüm erişim token’larını iptal eder.').waitFor()
+
+    // the form: read-only and 90 days are the defaults
+    await page.getByRole('button', { name: 'Yeni erişim token’ı' }).click()
+    const dialog = page.getByRole('dialog')
+    assert.ok(await dialog.getByRole('radio', { name: /^Salt okunur/ }).isChecked())
+    assert.equal(await dialog.getByLabel('Geçerlilik süresi').inputValue(), '90')
+    assert.deepEqual(await dialog.getByLabel('Geçerlilik süresi').locator('option').allInnerTexts(), ['30 gün', '90 gün', '365 gün', 'Süresiz'])
+    assert.ok(await dialog.getByRole('button', { name: 'Oluştur' }).isDisabled(), 'a name is required')
+    await dialog.getByLabel('Ad', { exact: true }).fill('Claude Code – dizüstü')
+    await dialog.getByLabel('Geçerlilik süresi').selectOption('30')
+    const posted = page.waitForResponse((r) => r.request().method() == 'POST' && new URL(r.url()).pathname == '/api/me/tokens')
+    await dialog.getByRole('button', { name: 'Oluştur' }).click()
+    const response = await posted
+    assert.equal(response.status(), 201)
+    assert.deepEqual(response.request().postDataJSON(), { name: 'Claude Code – dizüstü', scopes: ['izlek:read'], expires_in_days: 30 })
+    assert.ok(response.request().headers()['x-la-csrf'])
+
+    // shown once, with copy
+    await dialog.getByRole('heading', { name: 'Erişim token’ı oluşturuldu' }).waitFor()
+    const token = (await page.getByTestId('pat-secret').innerText()).trim()
+    assert.match(token, /^pat_[0-9A-Za-z]{40}$/)
+    await dialog.getByText('Bu token yalnızca şimdi gösterilir; bir daha göremezsiniz.').waitFor()
+    await page.getByTestId('pat-copy').click()
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), token)
+    await shot('29j-access-token-once')
+    await dialog.getByRole('button', { name: 'Kopyaladım, kapat' }).click()
+    assert.equal(await page.getByRole('dialog').count(), 0)
+    assert.equal(await page.content().then((html) => html.includes(token)), false, 'the token is gone from the page')
+
+    // listed with its access in plain words
+    const created = mine()[0]
+    const row = list.locator(`tr[data-token-id="${created.id}"]`)
+    await row.waitFor()
+    assert.match(await row.innerText(), /Claude Code – dizüstü[\s\S]*pat_…[0-9A-Za-z]{4}[\s\S]*Salt okunur[\s\S]*Hiç kullanılmadı/)
+    assert.ok((await row.innerText()).includes('pat_…' + token.slice(-4)))
+    assert.deepEqual([created.scopes, Math.round((created.expires_at - created.created_at) / 86_400_000)], [['izlek:read'], 30])
+    assert.equal(await list.getAttribute('data-count'), '1')
+    await page.reload()
+    await list.locator('tbody tr').first().waitFor()
+    assert.equal(await page.content().then((html) => html.includes(token)), false, 'and never comes back')
+
+    // a second one with change access and no expiry; newest first
+    await page.getByRole('button', { name: 'Yeni erişim token’ı' }).click()
+    await page.getByRole('dialog').getByLabel('Ad', { exact: true }).fill('Betik')
+    await page.getByRole('dialog').getByRole('radio', { name: /^Okuma ve değişiklik/ }).check()
+    await page.getByRole('dialog').getByLabel('Geçerlilik süresi').selectOption('never')
+    await page.getByRole('dialog').getByRole('button', { name: 'Oluştur' }).click()
+    await page.getByTestId('pat-secret').waitFor()
+    await page.getByRole('dialog').getByRole('button', { name: 'Kopyaladım, kapat' }).click()
+    await list.locator('tbody tr').nth(1).waitFor()
+    const rows = await list.locator('tbody tr').allInnerTexts()
+    assert.match(rows[0], /Betik[\s\S]*Okuma ve değişiklik[\s\S]*Süresiz/)
+    assert.match(rows[1], /Claude Code – dizüstü/)
+    assert.deepEqual(mine().find((t) => t.name == 'Betik').scopes, ['izlek:read', 'izlek:admin'])
+    await shot('29k-access-tokens')
+    await noOverflow()
+
+    // the API: bad input is refused, other users' tokens do not exist, 25 is the limit
+    const api = await page.evaluate(async (other) => {
+      const me = await (await fetch('/api/me')).json()
+      const call = async (method, url, body, csrf = me.csrf) => {
+        const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-LA-CSRF': csrf } : {}) }, body: body && JSON.stringify(body) })
+        return [r.status, r.status == 204 ? null : (await r.json()).error?.code ?? null]
+      }
+      const ok = { name: 'x', scopes: ['izlek:read'], expires_in_days: 90 }
+      const out = {
+        noCsrf: await call('POST', '/api/me/tokens', ok, null),
+        noName: await call('POST', '/api/me/tokens', { ...ok, name: '' }),
+        longName: await call('POST', '/api/me/tokens', { ...ok, name: 'n'.repeat(81) }),
+        adminOnly: await call('POST', '/api/me/tokens', { ...ok, scopes: ['izlek:admin'] }),
+        badExpiry: await call('POST', '/api/me/tokens', { ...ok, expires_in_days: 7 }),
+        foreign: await call('DELETE', `/api/me/tokens/${other}`),
+        filled: [],
+      }
+      for (let i = 0; i < 23; i++) out.filled.push((await call('POST', '/api/me/tokens', { ...ok, name: 'dolgu ' + i }))[0])
+      out.tooMany = await call('POST', '/api/me/tokens', ok)
+      return out
+    }, (mock.db.pats.push({ user_id: -1, id: 'foreign', seq: 0, name: 'başkası', prefix: 'pat_…zzzz', scopes: ['izlek:read'], created_at: 0, last_used_at: null, expires_at: null, hash: '' }), 'foreign'))
+    assert.deepEqual(
+      { ...api, filled: [...new Set(api.filled)] },
+      { noCsrf: [403, 'csrf'], noName: [400, 'bad_request'], longName: [400, 'bad_request'], adminOnly: [400, 'bad_request'], badExpiry: [400, 'bad_request'], foreign: [404, 'not_found'], filled: [201], tooMany: [400, 'too_many_tokens'] },
+    )
+    assert.equal(mine().length, 25)
+    assert.ok(mock.db.pats.some((t) => t.id == 'foreign'))
+    // the UI says it in the user's language instead of echoing the server
+    await page.reload()
+    await list.locator('tbody tr').nth(24).waitFor()
+    assert.equal(await list.locator('tbody tr').count(), 25, 'only this user’s tokens')
+    await page.getByRole('button', { name: 'Yeni erişim token’ı' }).click()
+    await page.getByRole('dialog').getByLabel('Ad', { exact: true }).fill('Fazla')
+    await page.getByRole('dialog').getByRole('button', { name: 'Oluştur' }).click()
+    await page.getByRole('dialog').getByRole('alert').filter({ hasText: 'En çok 25 erişim token’ınız olabilir.' }).waitFor()
+    await page.getByRole('dialog').getByRole('button', { name: 'Vazgeç' }).click()
+    mock.db.pats = mock.db.pats.filter((t) => !t.name.startsWith('dolgu') && t.name != 'x')
+    await page.reload()
+    await list.locator('tbody tr').nth(1).waitFor()
+
+    // revoke asks first; cancelling changes nothing; confirming removes the row
+    const revoke = row.getByRole('button', { name: 'İptal et' })
+    await revoke.click()
+    await page.getByRole('dialog').getByRole('heading', { name: 'Erişim token’ı iptal edilsin mi?' }).waitFor()
+    await page.getByRole('dialog').getByText('“Claude Code – dizüstü” hemen geçersiz olur.').waitFor()
+    await page.getByRole('dialog').getByRole('button', { name: 'Vazgeç' }).click()
+    assert.equal(mine().length, 2)
+    await revoke.click()
+    const deleted = page.waitForResponse((r) => r.request().method() == 'DELETE' && new URL(r.url()).pathname == `/api/me/tokens/${created.id}`)
+    await page.getByRole('dialog').getByRole('button', { name: 'İptal et' }).click()
+    const gone = await deleted
+    assert.equal(gone.status(), 204)
+    assert.ok(gone.request().headers()['x-la-csrf'])
+    await page.getByText('Claude Code – dizüstü iptal edildi.').waitFor()
+    await row.waitFor({ state: 'detached' })
+    assert.deepEqual(mine().map((t) => t.name), ['Betik'])
+    await toastGone()
+
+    // English headings and access wording
+    await page.evaluate(() => localStorage.setItem('la_locale', 'en'))
+    await page.reload()
+    await page.getByRole('heading', { name: 'Access tokens' }).waitFor()
+    assert.match(await page.getByTestId('access-tokens').locator('tbody tr').first().innerText(), /Betik[\s\S]*Read and change[\s\S]*Never used[\s\S]*Never/)
+    await page.getByRole('button', { name: 'New access token' }).click()
+    assert.deepEqual(await page.getByRole('dialog').getByLabel('Expires after').locator('option').allInnerTexts(), ['30 days', '90 days', '365 days', 'Never'])
+    await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click()
+    await page.evaluate(() => localStorage.setItem('la_locale', 'tr'))
+
+    // a server that predates access tokens answers 404: no card, no error
+    mock.hooks.pats = false
+    await go('/account')
+    await page.getByTestId('connected-apps').waitFor()
+    await page.getByRole('heading', { name: 'Bağlı uygulamalar' }).waitFor()
+    assert.equal(await page.getByTestId('access-tokens').count(), 0)
+    assert.equal(await page.getByRole('heading', { name: 'Erişim token’ları' }).count(), 0)
+    assert.equal(await page.getByRole('alert').count(), 0)
+  } finally {
+    mock.hooks.pats = true
+    mock.db.pats = []
+    await page.evaluate(() => localStorage.setItem('la_locale', 'tr')).catch(() => {})
   }
 })
 
