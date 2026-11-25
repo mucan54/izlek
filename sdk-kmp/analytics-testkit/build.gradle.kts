@@ -27,3 +27,6 @@ kotlin {
         }
     }
 }
+
+// Test support only: never published.
+tasks.withType<AbstractPublishToMaven>().configureEach { enabled = false }

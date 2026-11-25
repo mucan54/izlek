@@ -64,6 +64,7 @@ komutu işledikten sonra yansır (asenkron).
 | `izlek.ios=true\|false` | macOS'ta açık | `iosArm64`, `iosSimulatorArm64` |
 | `izlek.linux=true\|false` | kapalı | `linuxX64` doğrulama hedefi (ürün hedefi değildir; HTTP taşıması yoktur) |
 | `izlek.compose=true\|false` | kapalı | `analytics-replay-compose` modülü |
+| `izlek.publishDir=<dizin>` | `build/maven` | `publishAllPublicationsToIzlekRepository` görevinin yazdığı düz Maven deposu (açık olan tüm hedefler; `analytics-testkit` yayınlanmaz) |
 
 Android SDK'sı ve macOS olmayan bir makinede düz `./gradlew build` yalnızca `jvm` hedefini derler
 ve test eder. Sabitlenen sürümler: Gradle 8.14.3 (wrapper), Kotlin 2.2.21, AGP 8.11.1,

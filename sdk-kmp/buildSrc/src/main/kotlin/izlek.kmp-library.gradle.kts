@@ -13,6 +13,22 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 
 plugins {
     id("org.jetbrains.kotlin.multiplatform")
+    `maven-publish`
+}
+
+// Publishing: `./gradlew publishAllPublicationsToIzlekRepository -Pizlek.publishDir=/path/to/maven`
+// writes a plain Maven repository (all enabled targets) that an application can vendor or host.
+// Without the property the repository is `build/maven` of the root project.
+publishing {
+    repositories {
+        maven {
+            name = "izlek"
+            url = uri(
+                providers.gradleProperty("izlek.publishDir").orNull
+                    ?: rootProject.layout.buildDirectory.dir("maven").get().asFile.path,
+            )
+        }
+    }
 }
 
 val androidEnabled = izlekSwitch("android")
