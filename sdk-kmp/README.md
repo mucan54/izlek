@@ -93,8 +93,8 @@ okur. Elle kopyalanmış hex yoktur; tek doğruluk kaynağı `spec/vectors/` diz
 | Hedef | Derleme | Test | Not |
 |---|---|---|---|
 | `jvm` | evet | evet (tüm testler, gerçek `HttpURLConnection` + gzip + dosya sistemi dahil) | tam doğrulandı |
-| `android` | evet (debug + release, `sample-android` R8'li APK dahil) | ortak testler JVM üzerinde birim testi olarak | `androidMain` (yaşam döngüsü, cihaz bağlamı, View gezgini, dokunma kancası) **cihazda/emülatörde hiç çalıştırılmadı** |
-| `iosArm64`, `iosSimulatorArm64` | yalnızca klib (Linux'ta çapraz derleme; bağlama/framework yok) | hayır | `iosMain` (NSURLSession, bildirimler, `beginBackgroundTask`, SecRandom, UIKit gezgini) **hiç çalıştırılmadı**; POSIX dosya katmanı ve zlib kodu `linuxX64`'te çalıştırıldı |
+| `android` | evet (debug + release, `sample-android` R8'li APK dahil) | ortak testler JVM üzerinde birim testi olarak | `analytics-core` bir uygulamada (Magazam, Compose, AGP 9 / Kotlin 2.4 ile tüketilen yayın) Android 15 emülatöründe uçtan uca çalıştı (2026-11-25: `capture`, `screen`, yaşam döngüsü olayları, arka planda gönderim). View gezgini, dokunma kancası ve `flags`/`replay` modülleri cihazda çalıştırılmadı |
+| `iosArm64`, `iosSimulatorArm64` | klib; macOS'ta bir uygulamanın framework'üne bağlandı | hayır (SDK testleri) | `analytics-core` bir uygulamanın statik framework'üne bağlanıp iOS simülatöründe uçtan uca çalıştı (2026-11-25, Magazam: NSURLSession gönderimi, yaşam döngüsü bildirimleri, arka planda gönderim). Gerçek cihaz, UIKit gezgini ve `flags`/`replay` çalıştırılmadı |
 | `linuxX64` | evet | evet (ortak testler yerel ikili olarak) | yalnızca doğrulama amaçlı |
 | Compose modülü | jvm (masaüstü), android, ios klib | yalnızca jvm (masaüstü, ekransız) | Android/iOS üzerinde çalıştırılmadı |
 
